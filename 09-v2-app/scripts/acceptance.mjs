@@ -151,5 +151,53 @@ console.log("\n3) Field: cash completion requires receipt ref; logs channel VISI
   check("collection flowed to suppression (same path as webhook)", !!sup2);
 }
 
+console.log("\n4) NACH: mandate view; bounce raises orchestrator event; success closes like a payment");
+{
+  const loan3 = db().loans.find((l) =>
+    !db().nachMandates?.some((m) => m.loanId === l.loanId) &&
+    !db().suppressions.some((s) => s.customerId === l.customerId && s.active));
+  check("found loan for mandate", !!loan3);
+
+  const reg = await api("/api/nach", {
+    method: "POST",
+    body: JSON.stringify({ action: "register", loanId: loan3.loanId, umrn: "UMRN00042X", bank: "SBI", amountCap: loan3.emiAmount * 2 }),
+  });
+  check("mandate registered ACTIVE", reg.body?.mandate?.status === "ACTIVE", JSON.stringify(reg.body));
+  const mandateId = reg.body?.mandate?.id;
+
+  const bounce = await api("/api/nach", {
+    method: "POST",
+    body: JSON.stringify({ action: "presentment", mandateId, outcome: "BOUNCE", amount: loan3.emiAmount, reason: "01 insufficient funds" }),
+  });
+  check("bounce records + emits event", bounce.body?.action === "bounced_event_emitted", JSON.stringify(bounce.body));
+  const bounceEvt = db().interactionLogs.find((i) => i.outcome === "EVENT_NACH_BOUNCE" && i.loanId === loan3.loanId);
+  check("EVENT_NACH_BOUNCE in InteractionLog (orchestrator event)", !!bounceEvt);
+
+  const success = await api("/api/nach", {
+    method: "POST",
+    body: JSON.stringify({ action: "presentment", mandateId, outcome: "SUCCESS", amount: loan3.emiAmount, utr: "NACHUTR777" }),
+  });
+  check("success presentment closes", success.body?.action === "presentment_success_closed", JSON.stringify(success.body));
+  const supN = db().suppressions.find((s) => s.customerId === loan3.customerId && s.reason === "paid" && s.active);
+  check("NACH success created suppression (same closure path)", !!supN);
+
+  const overCap = await api("/api/nach", {
+    method: "POST",
+    body: JSON.stringify({ action: "presentment", mandateId, outcome: "SUCCESS", amount: loan3.emiAmount * 99 }),
+  });
+  check("presentment above mandate cap rejected", overCap.status === 400 && /cap/.test(overCap.body.error || ""));
+
+  const view = await api("/api/nach");
+  check("mandate view shows status per loan", view.body.mandates?.some((m) => m.loanId === loan3.loanId && m.status === "ACTIVE"));
+}
+
+console.log("\n5) Ops: audit trail requires compliance role");
+{
+  const officer = await api("/api/ops", { headers: { "x-role": "officer" } });
+  check("ops denied to officer (403)", officer.status === 403);
+  const ok = await api("/api/ops");
+  check("ops returns audit trail for compliance", Array.isArray(ok.body.audit) && ok.body.audit.length > 0);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

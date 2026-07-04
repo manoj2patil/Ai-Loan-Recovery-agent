@@ -5,7 +5,7 @@
 import {
   getDb, persist, newId,
   Customer, Loan, PaymentLinkRow, Ptp, Suppression, InteractionLog,
-  LegalCaseRow, LegalCaseHistoryRow, FieldVisitRow, UnmatchedPayment,
+  LegalCaseRow, LegalCaseHistoryRow, FieldVisitRow, UnmatchedPayment, NachMandate,
 } from "./store";
 
 // ---- lookups ----
@@ -130,6 +130,28 @@ export function cancelScheduledVisits(loanId: string, reason: string): number {
   if (n) persist();
   return n;
 }
+
+// ---- NACH mandates ----
+export function insertNachMandate(m: Omit<NachMandate, "id" | "createdAt" | "bounceCount" | "status">): NachMandate {
+  const row: NachMandate = {
+    ...m, id: newId("nach"), status: "ACTIVE", bounceCount: 0, createdAt: new Date().toISOString(),
+  };
+  getDb().nachMandates.push(row); persist();
+  return row;
+}
+export function findNachMandate(idOrUmrn: string): NachMandate | null {
+  return getDb().nachMandates.find((m) => m.id === idOrUmrn || m.umrn === idOrUmrn) ?? null;
+}
+export function findMandateByLoan(loanId: string): NachMandate | null {
+  return getDb().nachMandates.find((m) => m.loanId === loanId && m.status === "ACTIVE")
+    ?? getDb().nachMandates.find((m) => m.loanId === loanId) ?? null;
+}
+export function updateNachMandate(id: string, patch: Partial<NachMandate>): void {
+  const db = getDb();
+  const i = db.nachMandates.findIndex((m) => m.id === id);
+  if (i >= 0) { db.nachMandates[i] = { ...db.nachMandates[i], ...patch }; persist(); }
+}
+export function listNachMandates(): NachMandate[] { return getDb().nachMandates; }
 
 // ---- DND ----
 export function isOnInternalDnc(phone: string): boolean {

@@ -82,6 +82,15 @@ export interface FieldVisitRow {
   amountCollected?: number; receiptRef?: string; photoRefs?: string[];
 }
 
+export interface NachMandate {
+  id: string; loanId: string; customerId: string;
+  umrn: string;             // Unique Mandate Reference Number
+  bank: string; amountCap: number;
+  status: "ACTIVE" | "PAUSED" | "CANCELLED" | "EXHAUSTED";
+  bounceCount: number; lastOutcome?: "SUCCESS" | "BOUNCE";
+  lastPresentedAt?: string; nextPresentation?: string; createdAt: string;
+}
+
 export interface AuditRow {
   id: string; actor: string; role: Role; action: string; entity: string;
   entityId?: string; details?: unknown; at: string;
@@ -100,7 +109,11 @@ export interface Db {
   fieldVisits: FieldVisitRow[];
   auditLog: AuditRow[];
   dncNumbers: string[];     // internal do-not-contact list (stands in for the NCPR lookup)
+  nachMandates: NachMandate[];
 }
+
+/** Collections added after the first release — fill them in when loading an older db.json. */
+const LATER_COLLECTIONS = ["nachMandates"] as const;
 
 const DB_PATH = path.resolve(process.cwd(), "data", "db.json");
 const SEED_PATH = path.resolve(process.cwd(), "..", "02-data-and-schema", "database-backup.json");
@@ -116,7 +129,7 @@ function seed(): Db {
   const db: Db = {
     customers: [], loans: [], paymentLinks: [], unmatchedPayments: [], ptps: [],
     suppressions: [], interactionLogs: [], legalCases: [], legalCaseHistory: [],
-    fieldVisits: [], auditLog: [], dncNumbers: [],
+    fieldVisits: [], auditLog: [], dncNumbers: [], nachMandates: [],
   };
   if (fs.existsSync(SEED_PATH)) {
     const raw = JSON.parse(fs.readFileSync(SEED_PATH, "utf8"));
@@ -147,6 +160,7 @@ export function getDb(): Db {
   if (cache) return cache;
   if (fs.existsSync(DB_PATH)) {
     cache = JSON.parse(fs.readFileSync(DB_PATH, "utf8")) as Db;
+    for (const k of LATER_COLLECTIONS) (cache as any)[k] ??= [];
   } else {
     cache = seed();
     persist();

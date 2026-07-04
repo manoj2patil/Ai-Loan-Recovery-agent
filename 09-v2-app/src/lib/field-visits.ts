@@ -5,7 +5,7 @@
 
 import { insertFieldVisit, findFieldVisit, updateFieldVisit, listFieldVisits, findLoanByLoanId, logInteraction } from "./db";
 import { evaluateGate, GateResult } from "./compliance";
-import { recordVisitCollection } from "./payments";
+import { recordCollection } from "./payments";
 import { FieldVisitRow } from "./store";
 
 export type VisitOutcome = "PAID" | "PTP" | "DISPUTE" | "NOT_FOUND" | "REFUSED" | "LOCKED" | "OTHER";
@@ -72,9 +72,9 @@ export async function completeVisit(visitId: string, res: {
   });
 
   if (res.amountCollected && res.receiptRef) {
-    await recordVisitCollection({
-      loanId: v.loanId, customerId: v.customerId,
-      amount: res.amountCollected, receiptRef: res.receiptRef,
+    await recordCollection({
+      loanId: v.loanId, customerId: v.customerId, amount: res.amountCollected,
+      source: "visit", sourceRef: res.receiptRef,
     });
   }
   return findFieldVisit(visitId)!;

@@ -17,8 +17,12 @@ wired end-to-end per [`V2_INTEGRATION.md`](../08-v2-gap-modules/V2_INTEGRATION.m
 - **Field visits (Phase 5.5 ★)** — scheduling gated on channel `visit`, mandatory geo-tag at
   completion, **cash requires a receipt reference**, `InteractionLog(channel=VISIT)`, and a
   collection flows through the **same closure path as the webhook**.
+- **NACH mandate view (Phase 5.5 ★)** — mandate status per loan (UMRN, cap, bounce count);
+  a **bounce raises an orchestrator event** (`EVENT_NACH_BOUNCE`, 3 bounces → EXHAUSTED); a
+  successful presentment runs the same payment-closure path as the webhook.
 - **RBAC + audit (Phase 1 ★)** — every write route calls `requireRole()`; every write lands in
-  the audit log; list/pay views use PII masking helpers.
+  the audit log; the Ops tab (compliance role) shows the unmatched-payment queue, the audit
+  trail, and recent gate decisions; list/pay views use PII masking helpers.
 
 ## Run
 

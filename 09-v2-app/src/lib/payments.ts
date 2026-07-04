@@ -72,6 +72,52 @@ export function signWebhookBody(rawBody: string): string {
   return crypto.createHmac("sha256", WEBHOOK_SECRET).update(rawBody).digest("hex");
 }
 
+/** The payment-closure steps every successful payment runs, whatever the source
+ *  (PG webhook, field-visit cash, NACH debit): suppression, PTP KEPT, PAYMENT_RECEIVED
+ *  log, gated receipt, orchestrator event. */
+async function closeOnPayment(opts: {
+  customerId: string; loanId: string; amount: number; utr?: string;
+  source: "webhook" | "visit" | "nach"; sourceRef?: string;
+}): Promise<void> {
+  // 1) IMMEDIATE suppression — never dun someone who just paid (compliance + reputation)
+  insertSuppression({
+    customerId: opts.customerId, reason: "paid",
+    endsAt: new Date(Date.now() + 2 * 86400000).toISOString(),
+  });
+
+  // 2) close matching PTP as KEPT if amounts align (tolerance ±1%)
+  const ptp = findOpenPtp(opts.loanId);
+  if (ptp && Math.abs(opts.amount - ptp.amount) <= ptp.amount * 0.01) {
+    closePtp(ptp.id, "KEPT");
+  }
+
+  // 3) InteractionLog: PAYMENT_RECEIVED with utr + amount
+  logInteraction({
+    customerId: opts.customerId, loanId: opts.loanId, channel: "SYSTEM",
+    direction: "INBOUND", outcome: "PAYMENT_RECEIVED",
+    details: { source: opts.source, sourceRef: opts.sourceRef, utr: opts.utr, amount: opts.amount },
+  });
+
+  // 4) receipt: WhatsApp Utility template "payment_confirmation" via the gated send
+  const gate = await evaluateGate({ customerId: opts.customerId, channel: "whatsapp", intent: "receipt" });
+  if (gate.verdict === "ALLOW") {
+    // PRODUCTION: send the approved "payment_confirmation" template via the WhatsApp BSP here.
+    logInteraction({
+      customerId: opts.customerId, loanId: opts.loanId, channel: "WHATSAPP",
+      direction: "OUTBOUND", outcome: "RECEIPT_SENT", gateVerdict: gate.verdict,
+      details: { template: "payment_confirmation", amount: opts.amount, utr: opts.utr },
+    });
+  }
+
+  // 5) orchestrator event payment.received — cancels queued outreach incl. field visits
+  const cancelled = cancelScheduledVisits(opts.loanId, "cancelled: payment received");
+  logInteraction({
+    customerId: opts.customerId, loanId: opts.loanId, channel: "SYSTEM",
+    direction: "INTERNAL", outcome: "EVENT_PAYMENT_RECEIVED",
+    details: { visitsCancelled: cancelled },
+  });
+}
+
 /** PG/UPI webhook → reconcile, suppress outreach, close PTP, issue receipt. Idempotent. */
 export async function handlePaymentWebhook(evt: {
   reference: string;        // our plink id (tr=) or UTR
@@ -88,48 +134,25 @@ export async function handlePaymentWebhook(evt: {
   }
   if (link.status === "PAID") return { matched: true, action: "duplicate_ignored", linkId: link.id };
 
-  // 1) mark paid
   updatePaymentLink(link.id, { status: "PAID", utr: evt.utr, paidAt: evt.paidAt });
-
-  // 2) IMMEDIATE suppression — never dun someone who just paid (compliance + reputation)
-  insertSuppression({
-    customerId: link.customerId, reason: "paid",
-    endsAt: new Date(Date.now() + 2 * 86400000).toISOString(),
+  await closeOnPayment({
+    customerId: link.customerId, loanId: link.loanId, amount: evt.amountPaid,
+    utr: evt.utr, source: "webhook", sourceRef: link.id,
   });
-
-  // 3) close matching PTP as KEPT if amounts align (tolerance ±1%)
-  const ptp = findOpenPtp(link.loanId);
-  if (ptp && Math.abs(evt.amountPaid - ptp.amount) <= ptp.amount * 0.01) {
-    closePtp(ptp.id, "KEPT");
-  }
-
-  // 4) InteractionLog: PAYMENT_RECEIVED with utr + amount
-  logInteraction({
-    customerId: link.customerId, loanId: link.loanId, channel: "SYSTEM",
-    direction: "INBOUND", outcome: "PAYMENT_RECEIVED",
-    details: { linkId: link.id, utr: evt.utr, amount: evt.amountPaid },
-  });
-
-  // 5) receipt: WhatsApp Utility template "payment_confirmation" via the gated send
-  const gate = await evaluateGate({ customerId: link.customerId, channel: "whatsapp", intent: "receipt" });
-  if (gate.verdict === "ALLOW") {
-    // PRODUCTION: send the approved "payment_confirmation" template via the WhatsApp BSP here.
-    logInteraction({
-      customerId: link.customerId, loanId: link.loanId, channel: "WHATSAPP",
-      direction: "OUTBOUND", outcome: "RECEIPT_SENT", gateVerdict: gate.verdict,
-      details: { template: "payment_confirmation", amount: evt.amountPaid, utr: evt.utr },
-    });
-  }
-
-  // 6) orchestrator event payment.received — cancels queued outreach incl. field visits
-  const cancelled = cancelScheduledVisits(link.loanId, "cancelled: payment received");
-  logInteraction({
-    customerId: link.customerId, loanId: link.loanId, channel: "SYSTEM",
-    direction: "INTERNAL", outcome: "EVENT_PAYMENT_RECEIVED",
-    details: { visitsCancelled: cancelled },
-  });
-
   return { matched: true, action: "reconciled_suppressed_receipted", linkId: link.id };
+}
+
+/** Off-channel collection (field-visit cash, NACH debit) — runs the SAME closure steps
+ *  as the webhook, without pretending to be one (no spurious unmatched-queue rows). */
+export async function recordCollection(opts: {
+  loanId: string; customerId: string; amount: number;
+  source: "visit" | "nach"; sourceRef: string; utr?: string;
+}): Promise<{ matched: true; action: string }> {
+  await closeOnPayment({
+    customerId: opts.customerId, loanId: opts.loanId, amount: opts.amount,
+    utr: opts.utr ?? opts.sourceRef, source: opts.source, sourceRef: opts.sourceRef,
+  });
+  return { matched: true, action: `${opts.source}_collection_closed` };
 }
 
 /** On-call payment: agent tool generates a link mid-call; confirmation read back to borrower.
@@ -149,41 +172,6 @@ export async function onCallPaymentLink(loanId: string, customerId: string, amou
     link,
     speech: "I've sent a secure payment link to your registered number. It is valid for three days.",
   };
-}
-
-/** Field collection flows through the SAME closure path as the webhook (V2_INTEGRATION §5). */
-export async function recordVisitCollection(opts: {
-  loanId: string; customerId: string; amount: number; receiptRef: string;
-}) {
-  return handlePaymentWebhook({
-    reference: `visit:${opts.receiptRef}`, amountPaid: opts.amount,
-    utr: opts.receiptRef, paidAt: new Date().toISOString(),
-  }).then(async (res) => {
-    if (!res.matched) {
-      // No payment link exists for a cash visit — run the closure steps directly.
-      insertSuppression({
-        customerId: opts.customerId, reason: "paid",
-        endsAt: new Date(Date.now() + 2 * 86400000).toISOString(),
-      });
-      const ptp = findOpenPtp(opts.loanId);
-      if (ptp && Math.abs(opts.amount - ptp.amount) <= ptp.amount * 0.01) closePtp(ptp.id, "KEPT");
-      logInteraction({
-        customerId: opts.customerId, loanId: opts.loanId, channel: "SYSTEM",
-        direction: "INBOUND", outcome: "PAYMENT_RECEIVED",
-        details: { source: "field_visit", receiptRef: opts.receiptRef, amount: opts.amount },
-      });
-      const gate = await evaluateGate({ customerId: opts.customerId, channel: "whatsapp", intent: "receipt" });
-      if (gate.verdict === "ALLOW") {
-        logInteraction({
-          customerId: opts.customerId, loanId: opts.loanId, channel: "WHATSAPP",
-          direction: "OUTBOUND", outcome: "RECEIPT_SENT", gateVerdict: gate.verdict,
-          details: { template: "payment_confirmation", amount: opts.amount, receiptRef: opts.receiptRef },
-        });
-      }
-      return { matched: true, action: "visit_collection_closed" };
-    }
-    return res;
-  });
 }
 
 export { findLoanByLoanId };
