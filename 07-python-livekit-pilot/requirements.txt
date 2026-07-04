@@ -1,0 +1,3 @@
+# Pin versions after your first successful run — the LiveKit Agents API evolves.
+livekit-agents[sarvam,silero]>=1.0.0
+python-dotenv>=1.0.0

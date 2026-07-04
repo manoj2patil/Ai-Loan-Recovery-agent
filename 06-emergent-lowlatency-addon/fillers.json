@@ -1,0 +1,25 @@
+{
+  "_comment": "Pre-generate each phrase as Bulbul v3 TTS ONCE and cache the audio by (lang+text). On end-of-turn, play a random 'neutral' filler INSTANTLY while the LLM thinks. Use 'empathetic' fillers when sentiment=distress/anger. These mask ~500-900ms of LLM latency and make the agent feel human. Keep them SHORT and non-committal (never promise anything).",
+
+  "neutral": {
+    "hi-IN": ["अच्छा…", "जी…", "ठीक है…", "हम्म…", "समझ गई…", "जी, बताइए…"],
+    "mr-IN": ["बरं…", "हो…", "ठीक आहे…", "हम्म…", "समजलं…", "अच्छा…"],
+    "en-IN": ["I see…", "okay…", "right…", "mm-hmm…", "got it…", "sure…"],
+    "ta-IN": ["சரி…", "ஆமா…", "புரிஞ்சுது…", "ம்ம்…"],
+    "te-IN": ["అలాగే…", "సరే…", "అర్థమైంది…", "మ్మ్…"],
+    "kn-IN": ["ಸರಿ…", "ಹೌದಾ…", "ಅರ್ಥ ಆಯಿತು…", "ಮ್ಮ್…"],
+    "gu-IN": ["સારું…", "હા…", "સમજી…", "હમ્મ…"],
+    "bn-IN": ["আচ্ছা…", "হ্যাঁ…", "বুঝেছি…", "হুম…"]
+  },
+
+  "empathetic": {
+    "hi-IN": ["ओह, समझ सकती हूँ…", "जी, कोई बात नहीं…", "मैं समझती हूँ…"],
+    "mr-IN": ["ओह, समजू शकते…", "काही हरकत नाही…", "मी समजते…"],
+    "en-IN": ["Oh, I understand…", "I hear you…", "that's alright…"],
+    "ta-IN": ["புரியுது, பரவாயில்லை…"],
+    "te-IN": ["అర్థమవుతోంది, పర్వాలేదు…"],
+    "kn-IN": ["ಅರ್ಥ ಆಗುತ್ತೆ, ಪರವಾಗಿಲ್ಲ…"],
+    "gu-IN": ["સમજું છું, વાંધો નહીં…"],
+    "bn-IN": ["বুঝতে পারছি, অসুবিধা নেই…"]
+  }
+}
