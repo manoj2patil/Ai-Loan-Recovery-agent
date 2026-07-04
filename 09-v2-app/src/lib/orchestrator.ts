@@ -3,7 +3,8 @@
 // Compliance Gate. The gate always has the veto; every action (or veto) is logged.
 
 import { listLoans, findLoanByLoanId, guarantorsForLoan, updateGuarantor,
-         recentInteractions, queueHandoff, logInteraction, findCustomerById } from "./db";
+         recentInteractions, queueHandoff, logInteraction, findCustomerById,
+         voiceHistory } from "./db";
 import { rulesDueForLoan } from "./business-rules";
 import { sendNotice } from "./whatsapp";
 import { placeCall } from "./voice";
@@ -100,8 +101,15 @@ async function executeRule(loanId: string, rule: BusinessRule): Promise<CycleAct
       const disputes = recentInteractions(loan.customer.id, "VOICE", 30)
         .concat(recentInteractions(loan.customer.id, "WHATSAPP", 30))
         .filter((i) => ["DISPUTE", "HARDSHIP"].includes(i.outcome));
-      queueHandoff(loanId, loan.customer.id, disputes.length ? "dispute/hardship raised" : "NPA review");
-      return { ...base, result: "EXECUTED", detail: "queued for human officer" };
+      // Phase 2 emotion → handoff: sustained negative emotion on recent calls routes to a human.
+      const distressed = voiceHistory(loan.customer.id)
+        .filter((v) => Date.parse(v.startedAt) > Date.now() - 30 * 86400000)
+        .some((v) => (v.sentimentScore ?? 0) <= -0.6);
+      const reason = disputes.length ? "dispute/hardship raised"
+        : distressed ? "negative emotion on recent calls — human empathy required"
+        : "NPA review";
+      queueHandoff(loanId, loan.customer.id, reason);
+      return { ...base, result: "EXECUTED", detail: `queued for human officer (${reason})` };
     }
   }
 }

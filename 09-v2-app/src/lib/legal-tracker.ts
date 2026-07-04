@@ -5,8 +5,9 @@
 
 import {
   insertLegalCase, findLegalCase, updateLegalCase, listLegalCases,
-  insertCaseHistory, caseHistory, logInteraction,
+  insertCaseHistory, caseHistory, logInteraction, findLoanByLoanId,
 } from "./db";
+import { getConfig, cfg } from "./config";
 import { LegalCaseRow } from "./store";
 
 export type CaseType = "SARFAESI" | "SEC_138" | "ARBITRATION";
@@ -86,6 +87,44 @@ export function upcomingObligations(withinDays = 14) {
 
 export function listCasesWithHistory() {
   return listLegalCases().map((c) => ({ ...c, history: caseHistory(c.id) }));
+}
+
+/** Draft the SARFAESI 13(2) demand notice for a case (Phase 4 "SARFAESI drafting").
+ *  Figures are ledger-only; bank identity comes from SystemConfig. The draft is stored in
+ *  the case's document vault — SERVING it stays a human, compliance-role action. */
+export function draftSarfaesiNotice(caseId: string, by: string): { case_: LegalCaseRow; document: string } {
+  const c = findLegalCase(caseId);
+  if (!c) throw new Error("case not found");
+  if (c.type !== "SARFAESI") throw new Error("drafting is for SARFAESI cases only");
+  const loan = findLoanByLoanId(c.loanId);
+  if (!loan) throw new Error("loan not found");
+
+  const bank = getConfig("BANK_NAME", "the Bank");
+  const addr = getConfig("BANK_HO_ADDRESS", "");
+  const reg = getConfig("BANK_RBI_REG", "");
+  const days = cfg.sarfaesiNoticeDays();
+
+  const document = [
+    `DEMAND NOTICE UNDER SECTION 13(2) OF THE SARFAESI ACT, 2002`,
+    ``,
+    `From: ${bank}${reg ? ` (RBI Reg. ${reg})` : ""}${addr ? `, ${addr}` : ""}`,
+    `To: The borrower on loan account ${loan.loanId} and guarantor(s) on record`,
+    ``,
+    `Whereas your loan account ${loan.loanId} (${loan.productType}) has been classified as a`,
+    `Non-Performing Asset in accordance with RBI guidelines, you are hereby called upon to`,
+    `discharge in full your liability of ₹${loan.totalOutstanding.toLocaleString("en-IN")}`,
+    `(ledger outstanding as on ${new Date().toLocaleDateString("en-IN")}) within ${days} (sixty)`,
+    `days from the date of this notice, failing which the Bank shall be entitled to exercise`,
+    `all or any of the rights under Section 13(4) of the Act.`,
+    ``,
+    `[DRAFT — generated for review. Amounts are ledger-derived. This notice must be verified`,
+    `and approved by the Bank's counsel and authorised officer before service.]`,
+  ].join("\n");
+
+  const ref = `vault://sarfaesi-13-2/${c.loanId}/${Date.now()}.txt`;
+  updateLegalCase(caseId, { documents: [...c.documents, ref] });
+  insertCaseHistory({ caseId, stage: c.stage, note: `13(2) draft generated (${ref})`, by });
+  return { case_: findLegalCase(caseId)!, document };
 }
 
 /** Advocate performance rollup (assignment quality signal). */

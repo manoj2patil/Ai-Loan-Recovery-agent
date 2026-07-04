@@ -6,7 +6,8 @@
 import { NextResponse } from "next/server";
 import {
   createCase, advanceStage, setHearing, upcomingObligations,
-  listCasesWithHistory, advocatePerformance, RESTRICTED_STAGES, CaseStage,
+  listCasesWithHistory, advocatePerformance, draftSarfaesiNotice,
+  RESTRICTED_STAGES, CaseStage,
 } from "@/lib/legal-tracker";
 import { findLoanByLoanId } from "@/lib/db";
 import { requireRole, HttpError } from "@/lib/auth";
@@ -48,6 +49,14 @@ export async function POST(req: Request) {
       writeAudit({ actor: actor.name, role: actor.role, action: "LEGAL_STAGE_ADVANCE",
         entity: "LegalCase", entityId: body.caseId, details: { toStage: to, note: body.note } });
       return NextResponse.json({ ok: true, case: row });
+    }
+
+    if (body.action === "draft-notice") {
+      const actor = requireRole(req, "officer"); // drafting is safe; SERVING needs compliance
+      const { case_, document } = draftSarfaesiNotice(body.caseId, actor.name);
+      writeAudit({ actor: actor.name, role: actor.role, action: "SARFAESI_DRAFT",
+        entity: "LegalCase", entityId: body.caseId, details: { documents: case_.documents.length } });
+      return NextResponse.json({ ok: true, case: case_, document });
     }
 
     if (body.action === "hearing") {

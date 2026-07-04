@@ -9,7 +9,7 @@ import {
   logInteraction, cancelScheduledVisits,
 } from "./db";
 import { evaluateGate } from "./compliance";
-import { PaymentLinkRow } from "./store";
+import { getDb, persist, PaymentLinkRow } from "./store";
 
 const LINK_SECRET = process.env.PAYMENT_LINK_SECRET || "dev-link-secret";
 const WEBHOOK_SECRET = process.env.PAYMENT_WEBHOOK_SECRET || "dev-webhook-secret";
@@ -172,6 +172,50 @@ export async function onCallPaymentLink(loanId: string, customerId: string, amou
     link,
     speech: "I've sent a secure payment link to your registered number. It is valid for three days.",
   };
+}
+
+// ---- OTP-verified on-call confirmation (ROADMAP Phase 3 ★ "On-call payment") ----
+// The borrower authorises the on-call arrangement by reading back an OTP sent to their
+// registered number. Only the HASH is stored; 3 attempts; 5-minute validity.
+
+const hashOtp = (code: string) => crypto.createHash("sha256").update(code).digest("hex");
+
+export function requestOnCallOtp(linkId: string): { sent: boolean; devCode?: string } {
+  const db = getDb();
+  const link = findPaymentLink(linkId);
+  if (!link) throw new Error("link not found");
+  const code = String(crypto.randomInt(100000, 1000000));
+  db.otps = db.otps.filter((o) => o.linkId !== linkId); // one active OTP per link
+  db.otps.push({
+    id: "otp_" + crypto.randomBytes(6).toString("hex"), linkId,
+    codeHash: hashOtp(code), expiresAt: new Date(Date.now() + 5 * 60000).toISOString(), attempts: 0,
+  });
+  persist();
+  logInteraction({
+    customerId: link.customerId, loanId: link.loanId, channel: "SMS",
+    direction: "OUTBOUND", outcome: "OTP_SENT", details: { linkId },
+  });
+  // PRODUCTION: send via SMS gateway; never return the code. Dev returns it for the demo.
+  return { sent: true, devCode: process.env.NODE_ENV === "production" ? undefined : code };
+}
+
+export function verifyOnCallOtp(linkId: string, code: string): { verified: boolean; reason?: string } {
+  const db = getDb();
+  const otp = db.otps.find((o) => o.linkId === linkId && !o.verifiedAt);
+  if (!otp) return { verified: false, reason: "no pending otp" };
+  if (Date.parse(otp.expiresAt) < Date.now()) return { verified: false, reason: "otp expired" };
+  if (otp.attempts >= 3) return { verified: false, reason: "too many attempts" };
+  otp.attempts++;
+  if (otp.codeHash !== hashOtp(code)) { persist(); return { verified: false, reason: "wrong code" }; }
+  otp.verifiedAt = new Date().toISOString();
+  persist();
+  const link = findPaymentLink(linkId)!;
+  logInteraction({
+    customerId: link.customerId, loanId: link.loanId, channel: "SYSTEM",
+    direction: "INBOUND", outcome: "ON_CALL_CONFIRMATION_OTP_VERIFIED",
+    details: { linkId, amount: link.amount },
+  });
+  return { verified: true };
 }
 
 export { findLoanByLoanId };

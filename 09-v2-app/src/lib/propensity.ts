@@ -10,8 +10,17 @@ export interface Factor { name: string; weight: number; score: number; evidence:
 
 const clamp = (n: number) => Math.max(0, Math.min(100, Math.round(n)));
 
+export interface ExtendedSignals {
+  paymentVelocity90d: number;
+  timeOfDayAnswerRates: Record<number, number>;
+  geo: { city: string | null; state: string | null };
+  productType: string;
+}
+
 /** 6 factors, weighted to 100. Grounded in ledger + interaction history only. */
-export function propensityScore(loanId: string): { score: number; segment: string; factors: Factor[] } {
+export function propensityScore(loanId: string): {
+  score: number; segment: string; factors: Factor[]; extendedSignals: ExtendedSignals;
+} {
   const loan = findLoanByLoanId(loanId);
   if (!loan) throw new Error("loan not found");
   const c = loan.customer;
@@ -71,7 +80,24 @@ export function propensityScore(loanId: string): { score: number; segment: strin
   const factors = [f1, f2, f3, f4, f5, f6];
   const score = clamp(factors.reduce((s, f) => s + (f.score * f.weight) / 100, 0));
   const segment = score >= 65 ? "HIGH" : score >= 40 ? "MEDIUM" : "LOW";
-  return { score, segment, factors };
+
+  // ★ Signal expansion path (ROADMAP Phase 4): behavioral segmentation signals surfaced
+  // alongside the 6 scored factors — advisory evidence, kept out of the score until
+  // validated on pilot data, so explainability stays intact.
+  const paidEvents = logs.filter((i) => i.outcome === "PAYMENT_RECEIVED");
+  const answerHours: Record<number, number> = {};
+  for (const v of calls.filter((v) => v.status === "COMPLETED")) {
+    const h = Math.floor((new Date(v.startedAt).getUTCHours() + 5.5) % 24);
+    answerHours[h] = (answerHours[h] ?? 0) + 1;
+  }
+  const extendedSignals = {
+    paymentVelocity90d: paidEvents.filter((p) => Date.parse(p.createdAt) > Date.now() - 90 * 86400000).length,
+    timeOfDayAnswerRates: answerHours,
+    geo: { city: c.city ?? null, state: c.state ?? null },
+    productType: loan.productType,
+  };
+
+  return { score, segment, factors, extendedSignals };
 }
 
 /** Settlement recommender (the "105B" advisory) — a bounded, policy-shaped starting point.

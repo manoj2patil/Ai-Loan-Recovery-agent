@@ -265,5 +265,53 @@ console.log("\n9) Governance KPIs");
   check("recovery figures ledger-derived", g.recovery?.amount > 0 && g.recovery?.payments > 0, JSON.stringify(g.recovery));
 }
 
+console.log("\n10) Phase-4/5 depth: QA, SARFAESI draft, OTP, economics, network, export, signals");
+{
+  // QA scorecard + hallucination detection over the seeded call transcripts
+  const qaDenied = await api("/api/qa", { headers: { "x-role": "officer" } });
+  check("QA denied to officer (403)", qaDenied.status === 403);
+  const { body: qa } = await api("/api/qa");
+  check("QA scores seeded transcripts", qa.callsScored > 0 && qa.avgScore != null, JSON.stringify({ n: qa.callsScored, avg: qa.avgScore }));
+  check("QA reports per-check fail rates", Array.isArray(qa.checkFailRates) && qa.checkFailRates.length === 4);
+
+  // SARFAESI 13(2) drafting stores a vault doc and quotes only the ledger figure
+  const sarLoan = db().loans.find((l) => l.dpd > 180 && ["HOME", "HOMELOAN", "GOLD", "AUTO", "MSME", "MSMELOAN", "AGRICULTURE", "TWOWHEELER"].includes(l.productType));
+  const sarCase = db().legalCases.find((c) => c.loanId === sarLoan?.loanId && c.type === "SARFAESI")
+    ?? (await api("/api/legal/cases", { method: "POST", body: JSON.stringify({ action: "create", loanId: sarLoan.loanId, type: "SARFAESI" }) })).body.case;
+  const draft = await api("/api/legal/cases", { method: "POST", body: JSON.stringify({ action: "draft-notice", caseId: sarCase.id }) });
+  check("13(2) draft generated with ledger figure", draft.body?.ok === true &&
+    draft.body.document.includes(sarLoan.totalOutstanding.toLocaleString("en-IN")), (draft.body?.document || "").slice(0, 60));
+  check("draft stored in document vault", draft.body?.case?.documents?.length > 0);
+
+  // OTP-verified on-call confirmation
+  const { body: ocl } = await api("/api/payments/link", { method: "POST", body: JSON.stringify({ loanId: sarLoan.loanId, purpose: "SETTLEMENT", amount: 5000 }) });
+  const otpReq = await api("/api/payments/otp", { method: "POST", body: JSON.stringify({ action: "request", linkId: ocl.link.id }) });
+  check("OTP issued (dev code returned)", otpReq.body?.ok === true && /^\d{6}$/.test(otpReq.body.devCode ?? ""));
+  const bad = await api("/api/payments/otp", { method: "POST", body: JSON.stringify({ action: "verify", linkId: ocl.link.id, code: "000000" }) });
+  check("wrong OTP rejected", bad.status === 400);
+  const good = await api("/api/payments/otp", { method: "POST", body: JSON.stringify({ action: "verify", linkId: ocl.link.id, code: otpReq.body.devCode }) });
+  check("correct OTP verifies + logs confirmation", good.body?.verified === true &&
+    db().interactionLogs.some((i) => i.outcome === "ON_CALL_CONFIRMATION_OTP_VERIFIED"));
+
+  // Channel-mix economics
+  const { body: gov } = await api("/api/governance");
+  check("economics computed per channel", gov.economics && gov.economics.totalCost > 0, JSON.stringify(gov.economics).slice(0, 100));
+
+  // Guarantor network graph
+  const { body: net } = await api("/api/network");
+  check("network graph has edges", net.edges?.length > 50, `${net.edges?.length} edges`);
+  check("network insights computed", Array.isArray(net.insights?.multiLoanGuarantors) && Array.isArray(net.insights?.crossExposedGuarantors));
+
+  // Masked CSV export
+  const exp = await fetch(BASE + "/api/data/export?entity=loans", { headers: { "x-role": "officer", "x-actor": "acceptance-bot" } });
+  const csvText = await exp.text();
+  check("CSV export streams with masking", exp.headers.get("content-type")?.includes("text/csv") &&
+    csvText.includes("XXXXXX") && !(/\+91\d{10}/.test(csvText)));
+
+  // Propensity signal expansion
+  const { body: b2 } = await api(`/api/borrower?loanId=${sarLoan.loanId}`);
+  check("propensity carries extendedSignals", b2.intelligence?.propensity?.extendedSignals?.productType === sarLoan.productType);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

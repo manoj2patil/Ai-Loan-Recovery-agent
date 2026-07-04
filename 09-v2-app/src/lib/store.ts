@@ -15,6 +15,7 @@ export interface Customer {
   name: string;
   phone: string;
   preferredLanguage: string;
+  city?: string; state?: string;
   consentSms: { granted: boolean };
   consentWhatsapp: { granted: boolean };
   consentVoice: { granted: boolean };
@@ -167,12 +168,13 @@ export interface Db {
   systemConfig: SystemConfigRow[];
   businessRules: BusinessRule[];
   handoffQueue: { id: string; loanId: string; customerId: string; reason: string; createdAt: string }[];
+  otps: { id: string; linkId: string; codeHash: string; expiresAt: string; verifiedAt?: string; attempts: number }[];
 }
 
 /** Collections added after the first release — fill them in when loading an older db.json. */
 const LATER_COLLECTIONS = [
   "nachMandates", "guarantors", "whatsappTemplates", "whatsappMessages",
-  "voiceCalls", "systemConfig", "businessRules", "handoffQueue",
+  "voiceCalls", "systemConfig", "businessRules", "handoffQueue", "otps",
 ] as const;
 
 const DB_PATH = path.resolve(process.cwd(), "data", "db.json");
@@ -191,14 +193,14 @@ function seed(): Db {
     suppressions: [], interactionLogs: [], legalCases: [], legalCaseHistory: [],
     fieldVisits: [], auditLog: [], dncNumbers: [], nachMandates: [],
     guarantors: [], whatsappTemplates: [], whatsappMessages: [], voiceCalls: [],
-    systemConfig: [], businessRules: [], handoffQueue: [],
+    systemConfig: [], businessRules: [], handoffQueue: [], otps: [],
   };
   if (fs.existsSync(SEED_PATH)) {
     const raw = JSON.parse(fs.readFileSync(SEED_PATH, "utf8"));
     for (const c of raw.Customer ?? []) {
       db.customers.push({
         id: c.id, customerId: c.customerId, name: c.name, phone: c.phone,
-        preferredLanguage: c.preferredLanguage,
+        preferredLanguage: c.preferredLanguage, city: c.city, state: c.state,
         consentSms: parseJsonString(c.consentSms, { granted: false }),
         consentWhatsapp: parseJsonString(c.consentWhatsapp, { granted: false }),
         consentVoice: parseJsonString(c.consentVoice, { granted: false }),

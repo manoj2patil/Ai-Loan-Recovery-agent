@@ -277,7 +277,13 @@ function OrchestratorTab() {
 /* ---------------- Governance ---------------- */
 function GovernanceTab() {
   const [d, setD] = useState<any>(null);
-  useEffect(() => { api("/api/governance").then((r) => setD(r.body)); }, []);
+  const [qa, setQa] = useState<any>(null);
+  const [net, setNet] = useState<any>(null);
+  useEffect(() => {
+    api("/api/governance").then((r) => setD(r.body));
+    api("/api/qa", undefined, "compliance").then((r) => setQa(r.body));
+    api("/api/network").then((r) => setNet(r.body));
+  }, []);
   if (!d) return <p className="text-sm text-slate-500">Loading…</p>;
   return (
     <div className="space-y-4 text-sm">
@@ -303,12 +309,43 @@ function GovernanceTab() {
           {Object.keys(d.gateDecisions30d).length === 0 && <p className="text-slate-500 text-xs">No decisions yet.</p>}
         </div>
         <div>
-          <h4 className="font-medium mb-1">Channel mix (30d outbound)</h4>
-          {Object.entries(d.channelMix30d).map(([k, v]: any) => (
-            <div key={k} className="flex gap-2"><span className="w-24 text-slate-500">{k}</span><span>{v}</span></div>
+          <h4 className="font-medium mb-1">Channel economics (30d)</h4>
+          {Object.entries(d.economics?.byChannel ?? {}).map(([k, v]: any) => (
+            <div key={k} className="flex gap-2">
+              <span className="w-24 text-slate-500">{k}</span>
+              <span>{v.touches} touches · {inr(v.cost)}</span>
+            </div>
           ))}
-          {Object.keys(d.channelMix30d).length === 0 && <p className="text-slate-500 text-xs">No outreach yet.</p>}
+          <div className="text-xs text-slate-500 mt-1">
+            total {inr(d.economics?.totalCost ?? 0)}
+            {d.economics?.costPerRupeeRecovered != null && <> · {d.economics.costPerRupeeRecovered} ₹cost/₹recovered</>}
+          </div>
         </div>
+        {qa && !qa.error && (
+          <div>
+            <h4 className="font-medium mb-1">Call QA ({qa.callsScored} scored)</h4>
+            <div>avg score <b>{qa.avgScore}</b> · hallucination-flagged <b>{qa.hallucinationFlagged}</b></div>
+            {qa.checkFailRates?.map((c: any) => (
+              <div key={c.check} className="flex gap-2 text-xs">
+                <span className="w-40 text-slate-500">{c.check}</span><span>{c.failPct}% fail</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {net && (
+          <div>
+            <h4 className="font-medium mb-1">Guarantor network</h4>
+            <div>{net.nodes.guarantors} guarantors · {net.edges.length} edges</div>
+            <div className="text-xs text-slate-500">
+              {net.insights.multiLoanGuarantors.length} back multiple loans ·{" "}
+              {net.insights.crossExposedGuarantors.length} are themselves overdue borrowers
+            </div>
+          </div>
+        )}
+      </div>
+      <div className="flex gap-3 text-xs">
+        <a className="text-indigo-700 underline" href="/api/data/export?entity=loans">Export loans (masked CSV)</a>
+        <a className="text-indigo-700 underline" href="/api/data/export?entity=interactions">Export interactions (CSV)</a>
       </div>
       <p className="text-xs text-slate-500">
         Compliance-by-architecture: every outreach above passed the gate; every veto is on the trail in Ops.
