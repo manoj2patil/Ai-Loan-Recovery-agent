@@ -1,0 +1,78 @@
+// Production schema for the v2 gap modules (from V2_INTEGRATION.md).
+// The dev build of this app uses the JSON store in src/lib/store.ts with identical shapes;
+// `prisma migrate` these models against PostgreSQL and swap src/lib/db.ts to the Prisma
+// client for production. Existing v1 tables (Customer, Loan, Installment, …) are untouched —
+// see 02-data-and-schema/SCHEMA.md for their exact shapes.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model PaymentLink {
+  id         String   @id
+  loanId     String
+  customerId String
+  amount     Float
+  purpose    String   // EMI | PTP | SETTLEMENT | PARTIAL
+  status     String   @default("CREATED") // CREATED | PAID | EXPIRED | FAILED
+  utr        String?
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+}
+
+model UnmatchedPayment {
+  id        String   @id @default(cuid())
+  reference String
+  amount    Float
+  utr       String?
+  raw       Json
+  createdAt DateTime @default(now())
+}
+
+model LegalCase {
+  id                String    @id @default(cuid())
+  loanId            String
+  customerId        String
+  type              String    // SARFAESI | SEC_138 | ARBITRATION
+  stage             String
+  noticeDate        DateTime?
+  statutoryDeadline DateTime?
+  nextHearing       DateTime?
+  court             String?
+  caseNumber        String?
+  advocateId        String?
+  documents         Json?
+  createdAt         DateTime  @default(now())
+}
+
+model LegalCaseHistory {
+  id     String   @id @default(cuid())
+  caseId String
+  stage  String
+  note   String
+  by     String
+  at     DateTime @default(now())
+}
+
+model FieldVisit {
+  id              String    @id @default(cuid())
+  loanId          String
+  customerId      String
+  agentId         String
+  scheduledFor    DateTime
+  status          String    @default("SCHEDULED")
+  address         String
+  lat             Float?
+  lng             Float?
+  geoAt           DateTime?
+  outcome         String?
+  outcomeNote     String?
+  amountCollected Float?
+  receiptRef      String?
+  photoRefs       Json?
+}
