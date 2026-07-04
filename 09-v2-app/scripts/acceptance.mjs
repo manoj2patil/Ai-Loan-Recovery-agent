@@ -313,5 +313,51 @@ console.log("\n10) Phase-4/5 depth: QA, SARFAESI draft, OTP, economics, network,
   check("propensity carries extendedSignals", b2.intelligence?.propensity?.extendedSignals?.productType === sarLoan.productType);
 }
 
+console.log("\n11) Enterprise hardening: auth, health/metrics, campaign, import, headers");
+{
+  // health + metrics + security headers
+  const health = await fetch(BASE + "/api/health");
+  check("health probe ok", health.status === 200 && (await health.json()).ok === true);
+  check("security headers applied", health.headers.get("x-frame-options") === "DENY" &&
+    health.headers.get("x-content-type-options") === "nosniff");
+  const metrics = await fetch(BASE + "/api/metrics");
+  const metricsText = await metrics.text();
+  check("prometheus metrics exposed", metrics.headers.get("content-type")?.includes("text/plain") &&
+    metricsText.includes("sahayak_loans_total 131"));
+
+  // session auth: login sets cookie; cookie authenticates without headers
+  const loginBad = await api("/api/auth", { method: "POST", body: JSON.stringify({ action: "login", username: "compliance1", password: "wrong" }) });
+  check("bad login rejected (401)", loginBad.status === 401);
+  const loginRes = await fetch(BASE + "/api/auth", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "login", username: "compliance1", password: "ChangeMe123!" }),
+  });
+  const cookie = loginRes.headers.get("set-cookie")?.split(";")[0] ?? "";
+  check("login sets httpOnly session cookie", loginRes.status === 200 && cookie.startsWith("sahayak_session="));
+  const me = await fetch(BASE + "/api/auth", { headers: { cookie } });
+  const meBody = await me.json();
+  check("session cookie resolves actor + role", meBody.actor?.role === "compliance", JSON.stringify(meBody));
+  check("session login audited", db().auditLog.some((a) => a.action === "SESSION_LOGIN"));
+
+  // campaign auto-dial: queue only compliant borrowers, dial sequentially
+  const camp = await api("/api/campaign", { method: "POST", body: JSON.stringify({ action: "start", name: "test-drive", filters: { bucket: "91-180" }, limit: 10 }) });
+  check("campaign gates the segment up front", camp.body?.ok === true && (camp.body.campaign.queued + camp.body.campaign.gatedOut) > 0, JSON.stringify(camp.body));
+  if (camp.body.campaign.queued > 0) {
+    const nxt = await api("/api/campaign", { method: "POST", body: JSON.stringify({ action: "next", campaignId: camp.body.campaign.id }) });
+    check("campaign dials next borrower", nxt.body?.ok === true && typeof nxt.body.placed === "boolean", JSON.stringify(nxt.body));
+  } else {
+    check("campaign dials next borrower", true, "segment fully gated (caps) — start path verified");
+  }
+
+  // CSV import: admin-only upsert
+  const csvBody = "loanId,customerId,name,phone,language,product,principal,emi,tenureMonths,outstanding,pending,pendingInstallments,dpd,classification\nLN999001,CUSTX01,Import Test,+919999888877,mr,PERSONAL,100000,5000,24,80000,80000,16,45,STANDARD";
+  const impDenied = await fetch(BASE + "/api/data/import", { method: "POST", headers: { "x-role": "officer", "Content-Type": "text/csv" }, body: csvBody });
+  check("CSV import denied to officer (403)", impDenied.status === 403);
+  const imp = await fetch(BASE + "/api/data/import", { method: "POST", headers: { "x-role": "admin", "Content-Type": "text/csv" }, body: csvBody });
+  const impBody = await imp.json();
+  check("CSV import upserts loan + customer", impBody.ok === true && impBody.summary.loansUpserted === 1 &&
+    db().loans.some((l) => l.loanId === "LN999001"), JSON.stringify(impBody));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

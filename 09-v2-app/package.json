@@ -8,6 +8,7 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.mts",
     "acceptance": "node scripts/acceptance.mjs"
   },
   "dependencies": {
@@ -22,6 +23,7 @@
     "@types/react-dom": "^19.1.0",
     "postcss": "^8.5.3",
     "tailwindcss": "^4.1.8",
+    "tsx": "^4.23.0",
     "typescript": "^5.8.3"
   }
 }

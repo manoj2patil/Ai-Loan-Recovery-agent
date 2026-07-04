@@ -30,6 +30,22 @@ from the real CBS export. Implements the v1 operational phases from
 - **Governance (Phase 5)** — gate-decision and channel-mix KPIs, recovery totals, PTP
   kept-rate, suppressions, handoff queue.
 
+## Phase 6 — Enterprise hardening
+
+- **Session auth** — `/api/auth` login/logout with scrypt-hashed users (`officer1` /
+  `compliance1` / `admin`, default password `ChangeMe123!` — change via `DEFAULT_*_PASSWORD`),
+  signed httpOnly cookies, session audit. Set `AUTH_MODE=session` to disable the dev
+  `x-role` fallback entirely.
+- **Encryption at rest** — set `STORE_ENCRYPTION_KEY` and the store persists as
+  AES-256-GCM ciphertext (auto-migrates plaintext on first read).
+- **API hardening** — security headers + per-IP rate limiting (middleware.ts).
+- **Ops** — `/api/health` (probes) and `/api/metrics` (Prometheus).
+- **Campaign auto-dial** — `/api/campaign`: gate-checked segment queue, sequential dialing.
+- **Ingestion** — `/api/data/import` CSV upsert (admin) + CBS delta-sync wiring.
+- **CI** — `.github/workflows/ci.yml`: typecheck, unit tests (`npm test` — every gate veto
+  reason, auth, encryption), build, and the acceptance suite on every push. `Dockerfile`
+  at the repo root builds the container.
+
 ## v2 — Gap modules (per [`V2_INTEGRATION.md`](../08-v2-gap-modules/V2_INTEGRATION.md))
 
 - **Payments closure (Phase 3 ★)** — signed UPI/web payment links (ledger-only amounts),

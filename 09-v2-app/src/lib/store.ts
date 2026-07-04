@@ -6,8 +6,15 @@
 
 import fs from "fs";
 import path from "path";
+import crypto from "crypto";
 
 export type Role = "officer" | "compliance" | "admin";
+
+export interface UserRow {
+  id: string; username: string; name: string; role: Role;
+  passwordHash: string;      // scrypt: salt:hex
+  active: boolean; createdAt: string; lastLoginAt?: string;
+}
 
 export interface Customer {
   id: string;               // internal cuid — Loan.customerId points HERE (see SCHEMA.md)
@@ -169,18 +176,56 @@ export interface Db {
   businessRules: BusinessRule[];
   handoffQueue: { id: string; loanId: string; customerId: string; reason: string; createdAt: string }[];
   otps: { id: string; linkId: string; codeHash: string; expiresAt: string; verifiedAt?: string; attempts: number }[];
+  users: UserRow[];
+  campaigns: {
+    id: string; name: string; filters: { bucket?: string; product?: string; language?: string };
+    queue: string[]; placed: string[]; gatedOut: number;
+    status: "ACTIVE" | "DONE"; createdAt: string;
+  }[];
 }
 
 /** Collections added after the first release — fill them in when loading an older db.json. */
 const LATER_COLLECTIONS = [
   "nachMandates", "guarantors", "whatsappTemplates", "whatsappMessages",
   "voiceCalls", "systemConfig", "businessRules", "handoffQueue", "otps",
+  "users", "campaigns",
 ] as const;
 
-const DB_PATH = path.resolve(process.cwd(), "data", "db.json");
-const SEED_PATH = path.resolve(process.cwd(), "..", "02-data-and-schema", "database-backup.json");
+// SAHAYAK_DATA_DIR lets tests run against an isolated store instead of data/.
+const DATA_DIR = process.env.SAHAYAK_DATA_DIR || path.resolve(process.cwd(), "data");
+const DB_PATH = path.join(DATA_DIR, "db.json");
+const DB_PATH_ENC = DB_PATH + ".enc";
+const SEED_PATH = process.env.SAHAYAK_SEED_PATH
+  || path.resolve(process.cwd(), "..", "02-data-and-schema", "database-backup.json");
 
 let cache: Db | null = null;
+
+// ---- Encryption at rest (ROADMAP Phase 1 ★ security posture) ----
+// When STORE_ENCRYPTION_KEY is set, the store is persisted as AES-256-GCM ciphertext
+// (db.json.enc) instead of plaintext. Key derivation: scrypt(key, fixed salt).
+// In the PostgreSQL production deployment this concern moves to disk/TDE encryption.
+
+function encKey(): Buffer | null {
+  const secret = process.env.STORE_ENCRYPTION_KEY;
+  if (!secret) return null;
+  return crypto.scryptSync(secret, "sahayak-store-v1", 32);
+}
+
+export function encryptStore(plaintext: string, key: Buffer): Buffer {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+  const body = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  return Buffer.concat([iv, cipher.getAuthTag(), body]); // 12B iv | 16B tag | ciphertext
+}
+
+export function decryptStore(blob: Buffer, key: Buffer): string {
+  const iv = blob.subarray(0, 12);
+  const tag = blob.subarray(12, 28);
+  const body = blob.subarray(28);
+  const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
+  decipher.setAuthTag(tag);
+  return Buffer.concat([decipher.update(body), decipher.final()]).toString("utf8");
+}
 
 function parseJsonString<T>(s: unknown, fallback: T): T {
   if (typeof s !== "string") return (s as T) ?? fallback;
@@ -194,6 +239,7 @@ function seed(): Db {
     fieldVisits: [], auditLog: [], dncNumbers: [], nachMandates: [],
     guarantors: [], whatsappTemplates: [], whatsappMessages: [], voiceCalls: [],
     systemConfig: [], businessRules: [], handoffQueue: [], otps: [],
+    users: [], campaigns: [],
   };
   if (fs.existsSync(SEED_PATH)) {
     const raw = JSON.parse(fs.readFileSync(SEED_PATH, "utf8"));
@@ -281,9 +327,14 @@ function seed(): Db {
 
 export function getDb(): Db {
   if (cache) return cache;
-  if (fs.existsSync(DB_PATH)) {
+  const key = encKey();
+  if (key && fs.existsSync(DB_PATH_ENC)) {
+    cache = JSON.parse(decryptStore(fs.readFileSync(DB_PATH_ENC), key)) as Db;
+    for (const k of LATER_COLLECTIONS) (cache as any)[k] ??= [];
+  } else if (fs.existsSync(DB_PATH)) {
     cache = JSON.parse(fs.readFileSync(DB_PATH, "utf8")) as Db;
     for (const k of LATER_COLLECTIONS) (cache as any)[k] ??= [];
+    if (key) persist(); // migrate plaintext → encrypted on first read with a key present
   } else {
     cache = seed();
     persist();
@@ -293,16 +344,24 @@ export function getDb(): Db {
 
 export function persist(): void {
   if (!cache) return;
-  fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
-  const tmp = DB_PATH + ".tmp";
-  fs.writeFileSync(tmp, JSON.stringify(cache, null, 1));
-  fs.renameSync(tmp, DB_PATH);
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  const key = encKey();
+  if (key) {
+    const tmp = DB_PATH_ENC + ".tmp";
+    fs.writeFileSync(tmp, encryptStore(JSON.stringify(cache), key));
+    fs.renameSync(tmp, DB_PATH_ENC);
+    if (fs.existsSync(DB_PATH)) fs.rmSync(DB_PATH); // never leave a plaintext copy behind
+  } else {
+    const tmp = DB_PATH + ".tmp";
+    fs.writeFileSync(tmp, JSON.stringify(cache, null, 1));
+    fs.renameSync(tmp, DB_PATH);
+  }
 }
 
 /** Test/demo helper: wipe the dev store so the next read re-seeds from the CBS export. */
 export function resetDb(): void {
   cache = null;
-  if (fs.existsSync(DB_PATH)) fs.rmSync(DB_PATH);
+  for (const p of [DB_PATH, DB_PATH_ENC]) if (fs.existsSync(p)) fs.rmSync(p);
 }
 
 export function newId(prefix: string): string {

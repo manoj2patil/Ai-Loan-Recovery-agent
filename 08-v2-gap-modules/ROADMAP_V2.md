@@ -46,6 +46,24 @@ Spocto X / CarmaOne / Dista) into the right phases. New items are marked ★.
 - ★ **NACH mandate view:** mandate status per loan; bounce → orchestrator event.
 - (later, optional) Skip-tracing — legally sensitive; only with counsel sign-off.
 
+## Phase 6 — Enterprise hardening (new ★, built)
+- ★ **Session authentication:** user accounts with scrypt password hashes, signed httpOnly
+  session cookies (8h TTL), login/logout/failure session audit; `AUTH_MODE=session` disables
+  all dev fallbacks. RBAC unchanged: officer < compliance < admin on every write route.
+- ★ **Encryption at rest:** AES-256-GCM store encryption (`STORE_ENCRYPTION_KEY`), tamper-
+  detecting, with automatic plaintext→encrypted migration. (PostgreSQL deployments use TDE.)
+- ★ **API hardening:** security headers (HSTS, frame-deny, nosniff, referrer/permissions
+  policy) and per-IP rate limiting on the whole API surface.
+- ★ **Operability:** `/api/health` (LB/K8s probes) + `/api/metrics` (Prometheus exposition:
+  gate verdicts, book stats, payments, suppressions, handoff depth).
+- ★ **Campaign auto-dial:** segment by DPD bucket/product/language, gate-check the whole
+  segment up front, dial sequentially with re-gating per call.
+- ★ **CBS + CSV ingestion:** admin-only CSV upsert of customers/loans; env-driven CBS
+  delta-sync wiring (Finacle/Flexcube/BaNCS/FinnOne adapters slot in).
+- ★ **Test gate in CI:** unit tests for every Compliance-Gate veto reason + auth + encryption,
+  end-to-end acceptance suite, typecheck and production build on every push (GitHub
+  Actions); Dockerfile for containerised deployment.
+
 ## What stays your moat (say this to the committee)
 On-prem/air-gap deployment, CBS-native event triggers, compliance-by-architecture (gate with
 veto + full reason trail), per-reply hallucination detection, and the guarantor network graph —
