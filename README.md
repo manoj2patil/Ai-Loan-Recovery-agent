@@ -19,7 +19,7 @@ rules, key stack facts, and which build path to take.
 | [`06-emergent-lowlatency-addon/`](06-emergent-lowlatency-addon/) | Non-destructive low-latency voice upgrade: Twilio Media Streams, filler, barge-in, multi-LLM |
 | [`07-python-livekit-pilot/`](07-python-livekit-pilot/) | Minimal LiveKit + Sarvam pilot wired to the real data |
 | [`08-v2-gap-modules/`](08-v2-gap-modules/) | v2 enterprise gap modules — payments, legal tracker, field visits, DND scrub — see [`ROADMAP_V2.md`](08-v2-gap-modules/ROADMAP_V2.md) and [`V2_INTEGRATION.md`](08-v2-gap-modules/V2_INTEGRATION.md) |
-| [`09-v2-app/`](09-v2-app/) | **Runnable Next.js app wiring the v2 modules end-to-end** — payments closure, gated DND-scrubbed compliance, legal tracker, field visits, RBAC + audit, acceptance suite |
+| [`09-v2-app/`](09-v2-app/) | **The runnable app (frontend + backend)** — portfolio/NPA engine, compliance gate, 12-rule orchestrator, WhatsApp/voice outreach, guarantor escalation, explainable propensity + settlement + best-time intelligence, governance KPIs, plus all v2 modules (payments, legal, field, NACH); 50-check acceptance suite |
 
 ## The 6 non-negotiable rules
 

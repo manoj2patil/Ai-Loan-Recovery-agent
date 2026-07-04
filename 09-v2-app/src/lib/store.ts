@@ -26,11 +26,60 @@ export interface Loan {
   loanId: string;           // LN500001
   customerId: string;       // → Customer.id
   productType: string;
+  principal: number;
   emiAmount: number;
+  tenureMonths: number;
   totalOutstanding: number;
   pendingAmount: number;
+  pendingInstallments: number;
+  nextDueDate?: string;
   dpd: number;
   assetClassification: string;
+  npaSinceDate?: string;
+  sarfaesiNoticeDate?: string;
+}
+
+export interface Guarantor {
+  id: string; guarantorId: string; linkedLoanId: string;   // → Loan.id
+  customerId?: string; name: string; phone: string; relationship: string;
+  consentWhatsapp: { granted: boolean }; consentVoice: { granted: boolean };
+  escalationStatus: "NONE" | "ELIGIBLE" | "NOTIFIED"; lastEscalatedAt?: string;
+}
+
+export interface WhatsappTemplateRow {
+  id: string; templateName: string; category: string; language: string;
+  bodyText: string; headerText?: string; buttonText?: string;
+  status: string; variablesSchema: string[];
+}
+
+export interface WhatsappMessageRow {
+  id: string; customerId: string; loanId?: string; templateId?: string;
+  direction: "INBOUND" | "OUTBOUND"; toPhone: string; body: string;
+  status: "SENT" | "DELIVERED" | "READ" | "FAILED";
+  variables?: Record<string, string>;
+  sentAt: string; deliveredAt?: string; readAt?: string;
+}
+
+export interface VoiceCallRow {
+  id: string; customerId: string; loanId?: string;
+  direction: "INBOUND" | "OUTBOUND"; toPhone: string; language: string;
+  startedAt: string; endedAt?: string; durationSec: number;
+  status: "INITIATED" | "COMPLETED" | "NO_ANSWER"; outcome?: string;
+  transcript?: string; recordingUrl?: string; sentimentScore?: number;
+  complianceGate?: unknown; agentType: "AI" | "HUMAN";
+}
+
+export interface SystemConfigRow {
+  key: string; value: string; category: string; description?: string;
+}
+
+export interface BusinessRule {
+  id: string; name: string; bucket: "0-30" | "31-60" | "61-90" | "91-180" | "180+";
+  action: "WHATSAPP" | "VOICE" | "GUARANTOR" | "SARFAESI" | "HUMAN_HANDOFF" | "FIELD_VISIT";
+  triggerDpd: number;        // fires when loan.dpd >= triggerDpd (and within bucket)
+  template?: string;         // WhatsApp templateName when action=WHATSAPP
+  rbiRef: string;            // the RBI/guideline reference the rule encodes
+  enabled: boolean; isDefault: boolean;
 }
 
 export interface PaymentLinkRow {
@@ -60,6 +109,7 @@ export interface InteractionLog {
   channel: "VOICE" | "WHATSAPP" | "SMS" | "VISIT" | "SYSTEM";
   direction: "INBOUND" | "OUTBOUND" | "INTERNAL";
   outcome: string; details?: unknown; gateVerdict?: string; createdAt: string;
+  promiseToPayDate?: string; promiseToPayAmount?: number; sentimentScore?: number;
 }
 
 export interface LegalCaseRow {
@@ -110,10 +160,20 @@ export interface Db {
   auditLog: AuditRow[];
   dncNumbers: string[];     // internal do-not-contact list (stands in for the NCPR lookup)
   nachMandates: NachMandate[];
+  guarantors: Guarantor[];
+  whatsappTemplates: WhatsappTemplateRow[];
+  whatsappMessages: WhatsappMessageRow[];
+  voiceCalls: VoiceCallRow[];
+  systemConfig: SystemConfigRow[];
+  businessRules: BusinessRule[];
+  handoffQueue: { id: string; loanId: string; customerId: string; reason: string; createdAt: string }[];
 }
 
 /** Collections added after the first release — fill them in when loading an older db.json. */
-const LATER_COLLECTIONS = ["nachMandates"] as const;
+const LATER_COLLECTIONS = [
+  "nachMandates", "guarantors", "whatsappTemplates", "whatsappMessages",
+  "voiceCalls", "systemConfig", "businessRules", "handoffQueue",
+] as const;
 
 const DB_PATH = path.resolve(process.cwd(), "data", "db.json");
 const SEED_PATH = path.resolve(process.cwd(), "..", "02-data-and-schema", "database-backup.json");
@@ -130,6 +190,8 @@ function seed(): Db {
     customers: [], loans: [], paymentLinks: [], unmatchedPayments: [], ptps: [],
     suppressions: [], interactionLogs: [], legalCases: [], legalCaseHistory: [],
     fieldVisits: [], auditLog: [], dncNumbers: [], nachMandates: [],
+    guarantors: [], whatsappTemplates: [], whatsappMessages: [], voiceCalls: [],
+    systemConfig: [], businessRules: [], handoffQueue: [],
   };
   if (fs.existsSync(SEED_PATH)) {
     const raw = JSON.parse(fs.readFileSync(SEED_PATH, "utf8"));
@@ -148,9 +210,68 @@ function seed(): Db {
     for (const l of raw.Loan ?? []) {
       db.loans.push({
         id: l.id, loanId: l.loanId, customerId: l.customerId, productType: l.productType,
-        emiAmount: l.emiAmount, totalOutstanding: l.totalOutstanding,
-        pendingAmount: l.pendingAmount, dpd: l.dpd, assetClassification: l.assetClassification,
+        principal: l.principal, emiAmount: l.emiAmount, tenureMonths: l.tenureMonths,
+        totalOutstanding: l.totalOutstanding, pendingAmount: l.pendingAmount,
+        pendingInstallments: l.pendingInstallments, nextDueDate: l.nextDueDate ?? undefined,
+        dpd: l.dpd, assetClassification: l.assetClassification,
+        npaSinceDate: l.npaSinceDate ?? undefined,
+        sarfaesiNoticeDate: l.sarfaesiNoticeDate ?? undefined,
       });
+    }
+    for (const g of raw.Guarantor ?? []) {
+      db.guarantors.push({
+        id: g.id, guarantorId: g.guarantorId, linkedLoanId: g.linkedLoanId,
+        customerId: g.customerId ?? undefined, name: g.name, phone: g.phone,
+        relationship: g.relationship,
+        consentWhatsapp: parseJsonString(g.consentWhatsapp, { granted: false }),
+        consentVoice: parseJsonString(g.consentVoice, { granted: false }),
+        escalationStatus: g.escalationStatus ?? "NONE",
+        lastEscalatedAt: g.lastEscalatedAt ?? undefined,
+      });
+    }
+    for (const t of raw.WhatsappTemplate ?? []) {
+      db.whatsappTemplates.push({
+        id: t.id, templateName: t.templateName, category: t.category, language: t.language,
+        bodyText: t.bodyText, headerText: t.headerText ?? undefined,
+        buttonText: t.buttonText ?? undefined, status: t.status,
+        variablesSchema: parseJsonString(t.variablesSchema, []),
+      });
+    }
+    for (const m of raw.WhatsappMessage ?? []) {
+      db.whatsappMessages.push({
+        id: m.id, customerId: m.customerId, loanId: m.loanId ?? undefined,
+        templateId: m.templateId ?? undefined, direction: m.direction, toPhone: m.toPhone,
+        body: String(m.body ?? ""), status: m.status,
+        variables: parseJsonString(m.variables, undefined),
+        sentAt: m.sentAt, deliveredAt: m.deliveredAt ?? undefined, readAt: m.readAt ?? undefined,
+      });
+    }
+    for (const v of raw.VoiceCall ?? []) {
+      db.voiceCalls.push({
+        id: v.id, customerId: v.customerId, loanId: v.loanId ?? undefined,
+        direction: v.direction, toPhone: v.toPhone, language: v.language,
+        startedAt: v.startedAt, endedAt: v.endedAt ?? undefined, durationSec: v.durationSec,
+        status: v.status, outcome: v.outcome ?? undefined,
+        transcript: v.transcript ? String(v.transcript) : undefined,
+        recordingUrl: v.recordingUrl ?? undefined,
+        sentimentScore: v.sentimentScore ?? undefined,
+        complianceGate: parseJsonString(v.complianceGate, undefined), agentType: v.agentType,
+      });
+    }
+    // Historic interaction logs → same shape as live ones (channel/direction/outcome)
+    for (const i of raw.InteractionLog ?? []) {
+      db.interactionLogs.push({
+        id: i.id, customerId: i.customerId, loanId: i.loanId ?? undefined,
+        channel: i.channel, direction: i.direction, outcome: i.outcome ?? "LOGGED",
+        details: { language: i.language, notes: i.outcomeNotes },
+        gateVerdict: undefined, createdAt: i.startedAt ?? i.createdAt,
+        promiseToPayDate: i.promiseToPayDate ?? undefined,
+        promiseToPayAmount: i.promiseToPayAmount ?? undefined,
+        sentimentScore: i.sentimentScore ?? undefined,
+      });
+    }
+    for (const s of raw.SystemConfig ?? []) {
+      db.systemConfig.push({ key: s.key, value: s.value, category: s.category, description: s.description });
     }
   }
   return db;

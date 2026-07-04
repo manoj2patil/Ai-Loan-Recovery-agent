@@ -1,7 +1,36 @@
-# Sah-Ayak v2 App — Payments · Legal · Field (wired)
+# Sah-Ayak Recovery Console — the full app (frontend + backend)
 
-Runnable implementation of the **v2 gap modules** from [`../08-v2-gap-modules/`](../08-v2-gap-modules/),
-wired end-to-end per [`V2_INTEGRATION.md`](../08-v2-gap-modules/V2_INTEGRATION.md):
+One Next.js deployable: React console (frontend) + App Router API routes (backend), seeded
+from the real CBS export. Implements the v1 operational phases from
+[`../04-claude-code-build/CLAUDE.md`](../04-claude-code-build/CLAUDE.md) /
+[`BUILD_STEPS.md`](../04-claude-code-build/BUILD_STEPS.md) **and** the v2 gap modules from
+[`../08-v2-gap-modules/`](../08-v2-gap-modules/).
+
+## v1 — Recovery operations (Phases 1, 3, 4, 5)
+
+- **Portfolio & NPA engine** — book stats, DPD buckets, RBI IRAC reclassification runs
+  (compliance role), product mix; SystemConfig-driven thresholds (never hardcoded).
+- **Compliance Gate** — ALLOW/DEFER/BLOCK veto on every outreach: suppression flags,
+  active suppressions, per-channel consent, ★DND scrub, SystemConfig frequency caps
+  (2 calls / 3 WhatsApp per day), calling hours 9–19 IST. Full reason trail, always logged.
+- **Business rules** — the 12 default RBI rules across 5 DPD buckets and 6 action types,
+  each with its RBI reference; toggleable (compliance role), never deletable.
+- **Orchestrator** — one cycle walks the overdue book worst-DPD-first, executes due rules
+  through the gate: WhatsApp notices, voice calls, guarantor escalation (consent +
+  threshold), field visits (phone-exhausted test), SARFAESI drafting (human serves),
+  human handoff queue.
+- **WhatsApp notices** — DPD-appropriate approved Utility template in the borrower's
+  language (hi/en fallback), ledger-only variables, WhatsappMessage + InteractionLog rows.
+- **Voice dispatch** — gated call placement with whitelist (borrower/guarantor only);
+  dev = simulated VoiceCall row; production = Twilio Media Streams (folder 06) or
+  LiveKit + Sarvam (folders 05/07) via env, per the on-prem swap rule.
+- **Intelligence (Phase 4)** — 6-factor **explainable** propensity (every factor ships
+  evidence), settlement recommender bounded by classification policy bands, and the
+  ★best-time/best-channel model learned from answer/read rates within legal hours.
+- **Governance (Phase 5)** — gate-decision and channel-mix KPIs, recovery totals, PTP
+  kept-rate, suppressions, handoff queue.
+
+## v2 — Gap modules (per [`V2_INTEGRATION.md`](../08-v2-gap-modules/V2_INTEGRATION.md))
 
 - **Payments closure (Phase 3 ★)** — signed UPI/web payment links (ledger-only amounts),
   signature-verified webhook, idempotent reconciliation, **auto-suppression on payment**,

@@ -6,6 +6,7 @@ import {
   getDb, persist, newId,
   Customer, Loan, PaymentLinkRow, Ptp, Suppression, InteractionLog,
   LegalCaseRow, LegalCaseHistoryRow, FieldVisitRow, UnmatchedPayment, NachMandate,
+  Guarantor, WhatsappTemplateRow, WhatsappMessageRow, VoiceCallRow, BusinessRule,
 } from "./store";
 
 // ---- lookups ----
@@ -152,6 +153,74 @@ export function updateNachMandate(id: string, patch: Partial<NachMandate>): void
   if (i >= 0) { db.nachMandates[i] = { ...db.nachMandates[i], ...patch }; persist(); }
 }
 export function listNachMandates(): NachMandate[] { return getDb().nachMandates; }
+
+// ---- guarantors ----
+export function guarantorsForLoan(loanDbId: string): Guarantor[] {
+  return getDb().guarantors.filter((g) => g.linkedLoanId === loanDbId);
+}
+export function updateGuarantor(id: string, patch: Partial<Guarantor>): void {
+  const db = getDb();
+  const i = db.guarantors.findIndex((g) => g.id === id);
+  if (i >= 0) { db.guarantors[i] = { ...db.guarantors[i], ...patch }; persist(); }
+}
+
+// ---- WhatsApp ----
+export function findTemplate(name: string, language: string): WhatsappTemplateRow | null {
+  const all = getDb().whatsappTemplates.filter((t) => t.templateName === name && t.status === "APPROVED");
+  return all.find((t) => t.language === language) ?? all.find((t) => t.language === "hi")
+    ?? all.find((t) => t.language === "en") ?? all[0] ?? null;
+}
+export function listTemplates(): WhatsappTemplateRow[] { return getDb().whatsappTemplates; }
+export function insertWhatsappMessage(m: Omit<WhatsappMessageRow, "id">): WhatsappMessageRow {
+  const row = { ...m, id: newId("wam") };
+  getDb().whatsappMessages.push(row); persist();
+  return row;
+}
+export function whatsappHistory(customerId: string): WhatsappMessageRow[] {
+  return getDb().whatsappMessages.filter((m) => m.customerId === customerId);
+}
+
+// ---- voice calls ----
+export function insertVoiceCall(v: Omit<VoiceCallRow, "id">): VoiceCallRow {
+  const row = { ...v, id: newId("vc") };
+  getDb().voiceCalls.push(row); persist();
+  return row;
+}
+export function voiceHistory(customerId: string): VoiceCallRow[] {
+  return getDb().voiceCalls.filter((v) => v.customerId === customerId);
+}
+
+// ---- business rules ----
+export function listBusinessRules(): BusinessRule[] { return getDb().businessRules; }
+export function saveBusinessRules(rules: BusinessRule[]): void {
+  getDb().businessRules = rules; persist();
+}
+export function updateBusinessRule(id: string, patch: Partial<BusinessRule>): BusinessRule | null {
+  const db = getDb();
+  const i = db.businessRules.findIndex((r) => r.id === id);
+  if (i < 0) return null;
+  db.businessRules[i] = { ...db.businessRules[i], ...patch }; persist();
+  return db.businessRules[i];
+}
+
+// ---- human handoff queue ----
+export function queueHandoff(loanId: string, customerId: string, reason: string): void {
+  const db = getDb();
+  if (!db.handoffQueue.some((h) => h.loanId === loanId && h.reason === reason)) {
+    db.handoffQueue.push({ id: newId("ho"), loanId, customerId, reason, createdAt: new Date().toISOString() });
+    persist();
+  }
+}
+export function listHandoffs() { return getDb().handoffQueue; }
+
+// ---- loans (bulk) ----
+export function listLoans(): Loan[] { return getDb().loans; }
+export function updateLoan(id: string, patch: Partial<Loan>): void {
+  const db = getDb();
+  const i = db.loans.findIndex((l) => l.id === id);
+  if (i >= 0) { db.loans[i] = { ...db.loans[i], ...patch }; persist(); }
+}
+export function listCustomers(): Customer[] { return getDb().customers; }
 
 // ---- DND ----
 export function isOnInternalDnc(phone: string): boolean {

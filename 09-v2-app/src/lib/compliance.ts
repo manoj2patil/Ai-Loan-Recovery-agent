@@ -13,6 +13,7 @@
 // hard suppression flags.
 
 import { findCustomerById, activeSuppressions, recentInteractions, isOnInternalDnc, logInteraction } from "./db";
+import { cfg } from "./config";
 
 export type Channel = "voice" | "whatsapp" | "sms" | "visit";
 export type Verdict = "ALLOW" | "DEFER" | "BLOCK";
@@ -23,7 +24,13 @@ export interface GateResult {
   blockedBy?: string;         // the failing check when not ALLOW
 }
 
-const FREQ_CAPS_7D: Record<Channel, number> = { voice: 3, whatsapp: 5, sms: 5, visit: 1 };
+/** Per-day caps come from SystemConfig (MAX_CALLS_PER_DAY=2, MAX_WHATSAPP_PER_DAY=3);
+ *  visits stay capped at 1 per 7 days. */
+function freqCap(channel: Channel): { max: number; days: number } {
+  if (channel === "voice") return { max: cfg.maxCallsPerDay(), days: 1 };
+  if (channel === "whatsapp" || channel === "sms") return { max: cfg.maxWhatsappPerDay(), days: 1 };
+  return { max: 1, days: 7 };
+}
 const CHANNEL_LOG: Record<Channel, "VOICE" | "WHATSAPP" | "SMS" | "VISIT"> = {
   voice: "VOICE", whatsapp: "WHATSAPP", sms: "SMS", visit: "VISIT",
 };
@@ -89,21 +96,23 @@ export async function evaluateGate(opts: {
     reasons.push("dnd_registry: clear");
   }
 
-  // 5. frequency caps — receipts are exempt
+  // 5. frequency caps (SystemConfig-driven) — receipts are exempt
   if (opts.intent !== "receipt") {
-    const sent = recentInteractions(customer.id, CHANNEL_LOG[opts.channel], 7).length;
-    if (sent >= FREQ_CAPS_7D[opts.channel])
-      return done("DEFER", `frequency_cap_${opts.channel}_7d`);
-    reasons.push(`frequency_cap: ${sent}/${FREQ_CAPS_7D[opts.channel]} in 7d`);
+    const cap = freqCap(opts.channel);
+    const sent = recentInteractions(customer.id, CHANNEL_LOG[opts.channel], cap.days).length;
+    if (sent >= cap.max)
+      return done("DEFER", `frequency_cap_${opts.channel}_${cap.days}d`);
+    reasons.push(`frequency_cap: ${sent}/${cap.max} in ${cap.days}d`);
   } else {
     reasons.push("frequency_cap: skipped (receipt)");
   }
 
-  // 6. calling hours 09:00–19:00 IST for intrusive channels
+  // 6. calling hours (SystemConfig CALLING_HOURS_*, IST) for intrusive channels
   if (opts.channel === "voice" || opts.channel === "visit") {
+    const start = cfg.callingHoursStart(); const end = cfg.callingHoursEnd();
     const istHour = (new Date().getUTCHours() + 5.5 + 24) % 24;
-    if (istHour < 9 || istHour >= 19) return done("DEFER", "outside_calling_hours_ist");
-    reasons.push("calling_hours_ist: within 09:00-19:00");
+    if (istHour < start || istHour >= end) return done("DEFER", "outside_calling_hours_ist");
+    reasons.push(`calling_hours_ist: within ${start}:00-${end}:00`);
   }
 
   return done("ALLOW");

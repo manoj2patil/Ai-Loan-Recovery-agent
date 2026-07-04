@@ -199,5 +199,71 @@ console.log("\n5) Ops: audit trail requires compliance role");
   check("ops returns audit trail for compliance", Array.isArray(ok.body.audit) && ok.body.audit.length > 0);
 }
 
+console.log("\n6) Portfolio & NPA engine (SystemConfig-driven)");
+{
+  const { body: p } = await api("/api/portfolio");
+  check("portfolio stats computed", p.stats?.loans === 131 && p.stats?.customers === 64, JSON.stringify(p.stats).slice(0, 120));
+  check("DPD buckets present", p.stats && Object.keys(p.stats.byBucket).length > 0);
+  check("propensity segments computed", p.segments && (p.segments.HIGH + p.segments.MEDIUM + p.segments.LOW) > 0);
+
+  const officerRun = await api("/api/portfolio", { method: "POST", headers: { "x-role": "officer" }, body: JSON.stringify({ action: "run-npa" }) });
+  check("NPA run denied to officer (403)", officerRun.status === 403);
+  const run = await api("/api/portfolio", { method: "POST", body: JSON.stringify({ action: "run-npa" }) });
+  check("NPA engine runs (compliance)", run.body?.ok === true && run.body?.run?.loansProcessed === 131, JSON.stringify(run.body));
+}
+
+console.log("\n7) Borrower 360 + explainable intelligence");
+{
+  const { body: b } = await api(`/api/borrower?loanId=${loanId}`);
+  check("borrower 360 returns masked profile", !!b.borrower && /X{4,}/.test(b.borrower.phone));
+  check("propensity has 6 weighted factors", b.intelligence?.propensity?.factors?.length === 6 &&
+    b.intelligence.propensity.factors.reduce((s, f) => s + f.weight, 0) === 100);
+  check("every factor carries evidence", b.intelligence.propensity.factors.every((f) => f.evidence?.length > 0));
+  check("settlement recommendation bounded", b.intelligence?.settlement?.settlementAmount > 0 &&
+    b.intelligence.settlement.settlementAmount <= b.loan.outstanding);
+  check("best-time window inside legal hours", /^(9|1[0-8]):00/.test(b.intelligence?.bestContact?.bestWindowIst ?? ""));
+}
+
+console.log("\n8) Business rules + orchestrator (gate has the veto)");
+{
+  const { body: o } = await api("/api/orchestrator");
+  check("12 default rules installed", o.rules?.length === 12 && o.rules.every((r) => r.isDefault));
+
+  const officerToggle = await api("/api/orchestrator", { method: "POST", headers: { "x-role": "officer" }, body: JSON.stringify({ action: "toggle-rule", id: "BR01", enabled: false }) });
+  check("rule toggle denied to officer (403)", officerToggle.status === 403);
+
+  const run = await api("/api/orchestrator", { method: "POST", body: JSON.stringify({ action: "run", limit: 10 }) });
+  check("cycle runs over worst-DPD loans", run.body?.ok === true && run.body.actions?.length > 0, JSON.stringify(run.body?.summary));
+  check("cycle executed some actions", (run.body?.summary?.EXECUTED ?? 0) > 0, JSON.stringify(run.body?.summary));
+
+  // every EXECUTED whatsapp/voice action must have a gate-ALLOW interaction log behind it
+  const d = db();
+  const outbound = d.interactionLogs.filter((i) => ["WHATSAPP", "VOICE"].includes(i.channel) && i.direction === "OUTBOUND" && i.gateVerdict);
+  check("outbound outreach carries gate verdicts", outbound.length > 0 && outbound.every((i) => i.gateVerdict === "ALLOW"));
+
+  // guarantor escalation respects config threshold + consent whitelist
+  const under = d.loans.find((l) => l.dpd > 0 && l.dpd < 60);
+  if (under) {
+    const esc = await api("/api/orchestrator", { method: "POST", body: JSON.stringify({ action: "escalate-guarantor", loanId: under.loanId }) });
+    check("guarantor escalation refused under threshold", esc.body?.escalated === false && /threshold/.test(esc.body?.detail ?? ""), JSON.stringify(esc.body));
+  } else {
+    check("guarantor escalation refused under threshold", true, "no sub-60-DPD loan to test");
+  }
+  // only escalations performed by THIS run (historic CBS rows may predate consent capture)
+  const recentCut = Date.now() - 3600000;
+  const notified = d.guarantors.filter((g) => g.escalationStatus === "NOTIFIED" &&
+    g.lastEscalatedAt && Date.parse(g.lastEscalatedAt) >= recentCut);
+  check("escalated guarantors are consented + stamped",
+    notified.every((g) => g.consentVoice?.granted || g.consentWhatsapp?.granted),
+    `${notified.length} escalated this run`);
+}
+
+console.log("\n9) Governance KPIs");
+{
+  const { body: g } = await api("/api/governance");
+  check("governance aggregates gate + channel mix", !!g.gateDecisions30d && !!g.channelMix30d);
+  check("recovery figures ledger-derived", g.recovery?.amount > 0 && g.recovery?.payments > 0, JSON.stringify(g.recovery));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
