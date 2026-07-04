@@ -9,6 +9,17 @@ const MAX_REQ = Number(process.env.RATE_LIMIT_PER_MIN || 300);
 const buckets = new Map<string, { count: number; resetAt: number }>();
 
 export function middleware(req: NextRequest) {
+  // Session mode: unauthenticated page visits go to /login. (Cookie PRESENCE check only —
+  // signature verification happens server-side in resolveActor on every API call.)
+  const path = req.nextUrl.pathname;
+  if (
+    process.env.AUTH_MODE === "session" &&
+    !path.startsWith("/api/") && path !== "/login" && !path.startsWith("/pay/") &&
+    !req.cookies.get("sahayak_session")
+  ) {
+    return NextResponse.redirect(new URL("/login", req.url));
+  }
+
   if (req.nextUrl.pathname.startsWith("/api/")) {
     const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "local";
     const now = Date.now();

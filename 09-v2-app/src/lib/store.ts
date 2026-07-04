@@ -75,6 +75,7 @@ export interface VoiceCallRow {
   status: "INITIATED" | "COMPLETED" | "NO_ANSWER"; outcome?: string;
   transcript?: string; recordingUrl?: string; sentimentScore?: number;
   complianceGate?: unknown; agentType: "AI" | "HUMAN";
+  providerSid?: string;      // Twilio Call SID when dispatched via the real trunk
 }
 
 export interface SystemConfigRow {

@@ -4,12 +4,16 @@
 
 import V1Sections from "@components/V1Sections";
 import V2Sections from "@components/V2Sections";
+import SessionBadge from "@components/SessionBadge";
 
 export default function Dashboard() {
   return (
     <main className="max-w-5xl mx-auto p-6 space-y-6">
       <header>
-        <h1 className="text-2xl font-bold">Sah-Ayak · Recovery Console</h1>
+        <div className="flex items-start justify-between">
+          <h1 className="text-2xl font-bold">Sah-Ayak · Recovery Console</h1>
+          <SessionBadge />
+        </div>
         <p className="text-sm text-slate-600">
           Portfolio · orchestration · intelligence · payments · legal · field · NACH. All writes
           RBAC-guarded and audit-logged; every outreach passes the Compliance Gate (DND-scrubbed,

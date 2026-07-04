@@ -30,3 +30,36 @@ jobs:
           npm run dev &
           for i in $(seq 1 60); do curl -sf http://localhost:3000/api/health && break; sleep 1; done
           npm run acceptance
+
+  prisma-postgres:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: 09-v2-app
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sahayak
+          POSTGRES_PASSWORD: sahayak
+          POSTGRES_DB: sahayak
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U sahayak" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://sahayak:sahayak@localhost:5432/sahayak
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: 09-v2-app/package-lock.json
+      - run: npm ci
+      - name: Push schema to PostgreSQL
+        run: npx prisma db push
+      - name: Seed the CBS export (verifies all 12 row counts)
+        run: npx tsx prisma/seed.ts
+      - name: Adapter parity test (JSON store vs PostgreSQL)
+        run: npx tsx --test tests/prisma-parity.test.mts

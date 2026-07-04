@@ -359,5 +359,27 @@ console.log("\n11) Enterprise hardening: auth, health/metrics, campaign, import,
     db().loans.some((l) => l.loanId === "LN999001"), JSON.stringify(impBody));
 }
 
+console.log("\n12) Login UI + Twilio wiring (env-driven dispatch)");
+{
+  const loginPage = await fetch(BASE + "/login");
+  check("login page renders", loginPage.status === 200 && (await loginPage.text()).includes("Sign in"));
+
+  const twiml = await fetch(BASE + "/api/voice/twiml");
+  const xml = await twiml.text();
+  check("TwiML served as XML", twiml.headers.get("content-type")?.includes("text/xml"));
+  check("TwiML is <Play>/<Pause>-only — never <Say>", !xml.includes("<Say"));
+
+  const cb = await fetch(BASE + "/api/voice/status", {
+    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: "CallSid=CAnonexistent&CallStatus=completed&CallDuration=42",
+  });
+  const cbBody = await cb.json();
+  check("status callback safe on unknown SID", cb.status === 200 && cbBody.matched === false);
+
+  // without TWILIO_* the dispatch mode is recorded as simulated on the interaction log
+  const dispatched = db().interactionLogs.find((i) => i.outcome === "CALL_INITIATED" && (i.details)?.dispatch);
+  check("dispatch mode recorded on call logs", dispatched?.details?.dispatch === "simulated", JSON.stringify(dispatched?.details ?? {}));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

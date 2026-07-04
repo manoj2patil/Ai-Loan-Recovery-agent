@@ -1,8 +1,8 @@
-// Production schema for the v2 gap modules (from V2_INTEGRATION.md).
-// The dev build of this app uses the JSON store in src/lib/store.ts with identical shapes;
-// `prisma migrate` these models against PostgreSQL and swap src/lib/db.ts to the Prisma
-// client for production. Existing v1 tables (Customer, Loan, Installment, …) are untouched —
-// see 02-data-and-schema/SCHEMA.md for their exact shapes.
+// Production schema for the Sah-Ayak recovery console — PostgreSQL 16.
+// CBS tables use the EXACT camelCase field names from 02-data-and-schema/SCHEMA.md
+// (BUILD_STEPS Step 1) so database-backup.json loads with no mapping. JSON-string
+// columns from the export are modelled as String, exactly as shipped.
+// prisma/seed.ts loads the CBS export; src/lib/data/prisma-db.ts is the async adapter.
 
 generator client {
   provider = "prisma-client-js"
@@ -13,16 +13,241 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model PaymentLink {
+// ---------- CBS tables (from SCHEMA.md) ----------
+
+model Customer {
+  id                String   @id
+  customerId        String   @unique
+  name              String
+  maskedAadhaar     String?
+  maskedPan         String?
+  preferredLanguage String
+  phone             String
+  altPhone          String?
+  email             String?
+  addressLine       String?
+  city              String
+  state             String?
+  pincode           String?
+  consentSms        String
+  consentWhatsapp   String
+  consentVoice      String
+  suppressionFlags  String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  loans             Loan[]
+}
+
+model Loan {
+  id                  String    @id
+  loanId              String    @unique
+  customerId          String
+  customer            Customer  @relation(fields: [customerId], references: [id])
+  productType         String
+  principal           Int
+  sanctionedDate      DateTime?
+  tenureMonths        Int
+  interestRate        Float
+  emiAmount           Int
+  disbursalDate       DateTime?
+  totalOutstanding    Int
+  pendingAmount       Int
+  pendingInstallments Int
+  nextDueDate         DateTime?
+  assetClassification String
+  dpd                 Int
+  npaSinceDate        DateTime?
+  sarfaesiNoticeDate  DateTime?
+  lastRecomputedAt    DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  installments        Installment[]
+  guarantors          Guarantor[]
+
+  @@index([dpd])
+  @@index([assetClassification])
+}
+
+model Installment {
+  id                String    @id
+  loanId            String
+  loan              Loan      @relation(fields: [loanId], references: [id])
+  installmentNo     Int
+  dueDate           DateTime
+  installmentAmount Int
+  paidFlag          Boolean
+  paidDate          DateTime?
+  paidAmount        Int
+  daysPastDue       Int
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([loanId])
+}
+
+model Guarantor {
+  id               String    @id
+  guarantorId      String    @unique
+  linkedLoanId     String
+  linkedLoan       Loan      @relation(fields: [linkedLoanId], references: [id])
+  customerId       String?
+  name             String
+  phone            String
+  relationship     String
+  consentWhatsapp  String
+  consentVoice     String
+  escalationStatus String
+  lastEscalatedAt  DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+}
+
+model InteractionLog {
+  id                  String    @id @default(cuid())
+  customerId          String
+  loanId              String?
+  channel             String
+  direction           String
+  language            String?
+  startedAt           DateTime  @default(now())
+  endedAt             DateTime?
+  outcome             String?
+  outcomeNotes        String?
+  promiseToPayDate    DateTime?
+  promiseToPayAmount  Int?
+  recordingUrl        String?
+  transcript          String?
+  sentimentScore      Float?
+  complianceGate      String
+  agentType           String    @default("AI")
+  humanAgentId        String?
+  createdAt           DateTime  @default(now())
+
+  @@index([customerId, channel, createdAt])
+}
+
+model WhatsappTemplate {
+  id              String   @id
+  templateName    String
+  category        String
+  language        String
+  bodyText        String
+  headerType      String?
+  headerText      String?
+  buttonText      String?
+  buttonUrl       String?
+  status          String
+  variablesSchema String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model WhatsappMessage {
+  id           String    @id @default(cuid())
+  customerId   String
+  loanId       String?
+  templateId   String?
+  direction    String
+  toPhone      String
+  fromPhone    String?
+  body         String
+  status       String
+  wamid        String?
+  errorMessage String?
+  variables    String?
+  sentAt       DateTime
+  deliveredAt  DateTime?
+  readAt       DateTime?
+  createdAt    DateTime  @default(now())
+}
+
+model VoiceCall {
+  id               String    @id @default(cuid())
+  customerId       String
+  loanId           String?
+  direction        String
+  toPhone          String
+  fromPhone        String?
+  language         String
+  detectedLanguage String?
+  startedAt        DateTime
+  endedAt          DateTime?
+  durationSec      Int       @default(0)
+  status           String
+  outcome          String?
+  transcript       String?
+  recordingUrl     String?
+  ttsEngine        String    @default("sarvam")
+  asrEngine        String    @default("sarvam")
+  llmEngine        String    @default("sarvam-30b")
+  llmModel         String?
+  sentimentScore   Float?
+  emotionTags      String?
+  complianceGate   String?
+  agentType        String    @default("AI")
+  humanAgentId     String?
+  providerCallSid  String?   // Twilio Call SID when dispatched via the real trunk
+  createdAt        DateTime  @default(now())
+}
+
+model AgentNote {
   id         String   @id
+  customerId String
+  loanId     String?
+  agentId    String
+  agentName  String
+  note       String
+  tags       String
+  createdAt  DateTime @default(now())
+}
+
+model SemanticMemory {
+  id                  String   @id
+  customerId          String
+  sourceInteractionId String?
+  content             String
+  embedding           String?
+  language            String
+  createdAt           DateTime @default(now())
+}
+
+model SystemConfig {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  value       String
+  category    String
+  description String?
+  isSecret    Boolean  @default(false)
+  updatedAt   DateTime @updatedAt
+}
+
+model NpaRun {
+  id                   String   @id @default(cuid())
+  startedAt            DateTime
+  finishedAt           DateTime
+  loansProcessed       Int
+  newNpaCount          Int
+  escalatedToGuarantor Int      @default(0)
+  status               String
+  details              String?
+}
+
+// ---------- v2 gap-module tables ----------
+
+model PaymentLink {
+  id         String    @id
   loanId     String
   customerId String
   amount     Float
-  purpose    String   // EMI | PTP | SETTLEMENT | PARTIAL
-  status     String   @default("CREATED") // CREATED | PAID | EXPIRED | FAILED
+  purpose    String // EMI | PTP | SETTLEMENT | PARTIAL
+  status     String    @default("CREATED") // CREATED | PAID | EXPIRED | FAILED
   utr        String?
+  upiDeepLink String?
+  webUrl     String?
+  signature  String?
+  paidAt     DateTime?
   expiresAt  DateTime
-  createdAt  DateTime @default(now())
+  createdAt  DateTime  @default(now())
 }
 
 model UnmatchedPayment {
@@ -34,11 +259,33 @@ model UnmatchedPayment {
   createdAt DateTime @default(now())
 }
 
+model Ptp {
+  id         String    @id @default(cuid())
+  loanId     String
+  customerId String
+  amount     Float
+  dueDate    DateTime
+  status     String    @default("OPEN") // OPEN | KEPT | BROKEN | CANCELLED
+  createdAt  DateTime  @default(now())
+  closedAt   DateTime?
+}
+
+model Suppression {
+  id         String    @id @default(cuid())
+  customerId String
+  reason     String
+  active     Boolean   @default(true)
+  createdAt  DateTime  @default(now())
+  endsAt     DateTime?
+
+  @@index([customerId, active])
+}
+
 model LegalCase {
   id                String    @id @default(cuid())
   loanId            String
   customerId        String
-  type              String    // SARFAESI | SEC_138 | ARBITRATION
+  type              String // SARFAESI | SEC_138 | ARBITRATION
   stage             String
   noticeDate        DateTime?
   statutoryDeadline DateTime?
@@ -75,4 +322,90 @@ model FieldVisit {
   amountCollected Float?
   receiptRef      String?
   photoRefs       Json?
+}
+
+model NachMandate {
+  id               String    @id @default(cuid())
+  loanId           String
+  customerId       String
+  umrn             String    @unique
+  bank             String
+  amountCap        Float
+  status           String    @default("ACTIVE") // ACTIVE | PAUSED | CANCELLED | EXHAUSTED
+  bounceCount      Int       @default(0)
+  lastOutcome      String?
+  lastPresentedAt  DateTime?
+  nextPresentation DateTime?
+  createdAt        DateTime  @default(now())
+}
+
+// ---------- platform tables (Phase 1/6) ----------
+
+model User {
+  id           String    @id @default(cuid())
+  username     String    @unique
+  name         String
+  role         String // officer | compliance | admin
+  passwordHash String
+  active       Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  lastLoginAt  DateTime?
+}
+
+model AuditLog {
+  id       String   @id @default(cuid())
+  actor    String
+  role     String
+  action   String
+  entity   String
+  entityId String?
+  details  Json?
+  at       DateTime @default(now())
+
+  @@index([action, at])
+}
+
+model BusinessRule {
+  id         String  @id
+  name       String
+  bucket     String
+  action     String
+  triggerDpd Int
+  template   String?
+  rbiRef     String
+  enabled    Boolean @default(true)
+  isDefault  Boolean @default(true)
+}
+
+model Campaign {
+  id        String   @id @default(cuid())
+  name      String
+  filters   Json
+  queue     Json // string[] of loanIds
+  placed    Json // string[] of loanIds
+  gatedOut  Int      @default(0)
+  status    String   @default("ACTIVE")
+  createdAt DateTime @default(now())
+}
+
+model Handoff {
+  id         String   @id @default(cuid())
+  loanId     String
+  customerId String
+  reason     String
+  createdAt  DateTime @default(now())
+}
+
+model Otp {
+  id         String    @id @default(cuid())
+  linkId     String
+  codeHash   String
+  expiresAt  DateTime
+  verifiedAt DateTime?
+  attempts   Int       @default(0)
+}
+
+model DncNumber {
+  phone   String   @id
+  addedAt DateTime @default(now())
 }

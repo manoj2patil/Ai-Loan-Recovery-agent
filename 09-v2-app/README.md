@@ -102,6 +102,28 @@ function maps 1:1 onto a Prisma call — for production, `prisma migrate` the mo
 [`prisma/schema.prisma`](prisma/schema.prisma) against PostgreSQL and swap the store import for
 the Prisma client. Existing v1 tables are untouched.
 
+## PostgreSQL data layer (production)
+
+```bash
+export DATABASE_URL=postgresql://user:pass@host:5432/sahayak
+npx prisma db push          # full schema: 12 CBS tables + v2 + platform models
+npx tsx prisma/seed.ts      # loads database-backup.json — verifies all 12 row counts
+npx tsx --test tests/prisma-parity.test.mts   # proves the adapter matches the JSON store
+```
+
+`src/lib/data/prisma-db.ts` is the async PostgreSQL twin of `src/lib/db.ts` — identical
+shapes (parity-tested in CI against a postgres service). Libs flip to it import-by-import.
+
+## Real telephony (Twilio)
+
+Set `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER` and every gated call
+(Borrower 360 "Place call", orchestrator, campaigns) dispatches a REAL PSTN call via the
+Twilio REST API (inline TwiML — no public webhook needed for the smoke leg). Optional:
+`GREETING_AUDIO_URL` (pre-generated Sarvam TTS) plays on answer; `MEDIA_STREAM_WSS`
+upgrades the leg to the folder-06 Media Streams bridge for the full conversation;
+a public `APP_URL` enables the `/api/voice/status` callback that closes out VoiceCall rows.
+TwiML is `<Play>`-only (never `<Say>`) with XML escaping — the VOICE LESSONS are unit-tested.
+
 ## Production wiring checklist (from V2_INTEGRATION)
 
 - [ ] Set `PAYMENT_LINK_SECRET`, `PAYMENT_WEBHOOK_SECRET`, `BANK_VPA`, `APP_URL`; point your
