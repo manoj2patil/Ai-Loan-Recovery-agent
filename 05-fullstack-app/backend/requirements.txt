@@ -1,0 +1,7 @@
+# Pin versions after first successful run.
+livekit-agents[sarvam,silero]>=1.0.0
+livekit-api>=0.8.0
+fastapi>=0.110
+uvicorn[standard]>=0.29
+asyncpg>=0.29
+python-dotenv>=1.0
