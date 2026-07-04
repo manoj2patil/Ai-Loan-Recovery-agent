@@ -1,0 +1,27 @@
+{
+  "name": "sahayak-v2-app",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Sah-Ayak v2 gap modules — payments closure, legal tracker, field visits, DND-scrubbed compliance gate",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "acceptance": "node scripts/acceptance.mjs"
+  },
+  "dependencies": {
+    "next": "^15.3.3",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.8",
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "postcss": "^8.5.3",
+    "tailwindcss": "^4.1.8",
+    "typescript": "^5.8.3"
+  }
+}
