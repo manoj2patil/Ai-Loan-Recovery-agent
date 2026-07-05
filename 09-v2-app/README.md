@@ -79,6 +79,10 @@ npm run dev            # seeds the store from ../02-data-and-schema/database-bac
 ```
 
 Open http://localhost:3000 — Payments / Legal Cases / Field Visits tabs.
+
+> Behind a corporate egress proxy (incl. Claude Code cloud environments): start the server
+> with `NODE_USE_ENV_PROXY=1` so Node's built-in fetch honors `HTTPS_PROXY` — otherwise
+> live Twilio/Sarvam dispatch fails with an allowlist error even when the host is allowed.
 Create a link for e.g. `LN500001`, open its web URL, hit **Pay now (sandbox)** and watch the
 closure flow (suppression, PTP KEPT, receipt) land in `data/db.json`.
 
