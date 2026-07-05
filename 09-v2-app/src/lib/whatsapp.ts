@@ -9,12 +9,13 @@ import { evaluateGate } from "./compliance";
 import { bucketFor } from "./business-rules";
 import { maskName } from "./audit";
 
+// Template names as they exist in the seeded WhatsappTemplate registry (from the CBS export).
 const BUCKET_TEMPLATE: Record<string, string> = {
   "0-30": "emi_due_reminder",
-  "31-60": "overdue_notice",
-  "61-90": "overdue_notice",
-  "91-180": "npa_classification_notice",
-  "180+": "npa_classification_notice",
+  "31-60": "emi_overdue_notice",
+  "61-90": "emi_overdue_notice",
+  "91-180": "npa_warning_notice",
+  "180+": "npa_warning_notice",
 };
 
 function render(body: string, vars: string[]): string {
@@ -28,7 +29,12 @@ export async function sendNotice(loanId: string, templateName?: string) {
   const customer = loan.customer;
 
   const name = templateName ?? BUCKET_TEMPLATE[bucketFor(loan.dpd)];
-  const template = findTemplate(name, customer.preferredLanguage);
+  // Language variants are suffixed in the registry (emi_due_reminder_en/_ta/_te) —
+  // try the borrower-language variant first, then the base name, then the EMI fallback.
+  const template =
+    findTemplate(`${name}_${customer.preferredLanguage}`, customer.preferredLanguage)
+    ?? findTemplate(name, customer.preferredLanguage)
+    ?? findTemplate("emi_due_reminder", customer.preferredLanguage);
   if (!template) throw new Error(`no approved template '${name}'`);
 
   const gate = await evaluateGate({ customerId: customer.id, channel: "whatsapp", intent: "recovery" });
@@ -42,12 +48,45 @@ export async function sendNotice(loanId: string, templateName?: string) {
   ];
   const body = render(template.bodyText, vars);
 
-  // PRODUCTION: POST to the WABA endpoint here; use the returned wamid + delivery webhooks.
+  // Dispatch: TWILIO_WHATSAPP_FROM set → REAL send via the Twilio WhatsApp API (sandbox:
+  // the recipient must have joined the sandbox first). Unset → simulated BSP (dev).
+  // PRODUCTION WABA uses approved Utility templates via Meta Cloud API — same call shape.
+  let wamid: string | undefined;
+  let status: "SENT" | "DELIVERED" = "DELIVERED";
+  if (process.env.TWILIO_WHATSAPP_FROM && process.env.TWILIO_ACCOUNT_SID) {
+    // Pilot safety: same allowlist as voice — real messages only to tester-owned numbers.
+    const allowlist = (process.env.OUTBOUND_CALL_ALLOWLIST ?? "")
+      .split(",").map((n) => n.trim()).filter(Boolean);
+    if (allowlist.length > 0 && !allowlist.includes(customer.phone))
+      throw new Error("destination not in OUTBOUND_CALL_ALLOWLIST (pilot safety)");
+    const sid = process.env.TWILIO_ACCOUNT_SID;
+    const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
+      method: "POST",
+      headers: {
+        Authorization: "Basic " + Buffer.from(`${sid}:${process.env.TWILIO_AUTH_TOKEN}`).toString("base64"),
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        From: `whatsapp:${process.env.TWILIO_WHATSAPP_FROM}`,
+        To: `whatsapp:${customer.phone}`,
+        Body: body,
+      }).toString(),
+    });
+    const text = await res.text();
+    let parsed: { sid?: string; message?: string };
+    try { parsed = JSON.parse(text); } catch {
+      throw new Error(`WhatsApp dispatch blocked before reaching Twilio (HTTP ${res.status}): ${text.slice(0, 120)}`);
+    }
+    if (!res.ok) throw new Error(`Twilio WhatsApp ${res.status}: ${parsed.message ?? "send failed"}`);
+    wamid = parsed.sid;
+    status = "SENT"; // delivery lands via the status webhook in production
+  }
+
   const message = insertWhatsappMessage({
     customerId: customer.id, loanId: loan.loanId, templateId: template.id,
-    direction: "OUTBOUND", toPhone: customer.phone, body, status: "DELIVERED",
-    variables: { customer_name: maskName(customer.name), loan_id: loan.loanId },
-    sentAt: new Date().toISOString(), deliveredAt: new Date().toISOString(),
+    direction: "OUTBOUND", toPhone: customer.phone, body, status,
+    variables: { customer_name: maskName(customer.name), loan_id: loan.loanId, ...(wamid ? { wamid } : {}) },
+    sentAt: new Date().toISOString(), deliveredAt: status === "DELIVERED" ? new Date().toISOString() : undefined,
   });
   logInteraction({
     customerId: customer.id, loanId: loan.loanId, channel: "WHATSAPP",

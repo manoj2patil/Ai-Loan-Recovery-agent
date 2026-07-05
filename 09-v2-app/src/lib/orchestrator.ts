@@ -127,7 +127,16 @@ export async function runCycle(limit = 50): Promise<{ actions: CycleAction[]; su
     const customer = findCustomerById(loan.customerId);
     if (!customer) continue;
     for (const rule of rulesDueForLoan(loan)) {
-      actions.push(await executeRule(loan.loanId, rule));
+      try {
+        actions.push(await executeRule(loan.loanId, rule));
+      } catch (e) {
+        // A live-dispatch failure (trunk down, egress blocked, provider 4xx) must not
+        // abort the cycle — record it and keep working the book.
+        actions.push({
+          loanId: loan.loanId, rule: rule.id, action: rule.action,
+          result: "SKIPPED", detail: `dispatch error: ${e instanceof Error ? e.message.slice(0, 80) : "unknown"}`,
+        });
+      }
     }
   }
   const summary: Record<string, number> = {};

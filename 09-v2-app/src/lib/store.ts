@@ -323,6 +323,17 @@ function seed(): Db {
       db.systemConfig.push({ key: s.key, value: s.value, category: s.category, description: s.description });
     }
   }
+
+  // Test overrides: SEED_PHONE_OVERRIDES="LOANID:+91xxxxxxxxxx,..." re-points selected
+  // borrowers' phones at tester-owned numbers (kept in .env, never committed) so live
+  // trunk tests ring real, consenting handsets instead of synthetic seed numbers.
+  for (const pair of (process.env.SEED_PHONE_OVERRIDES ?? "").split(",")) {
+    const [loanId, phone] = pair.split(":").map((s) => s?.trim());
+    if (!loanId || !phone) continue;
+    const loan = db.loans.find((l) => l.loanId === loanId);
+    const customer = loan && db.customers.find((c) => c.id === loan.customerId);
+    if (customer) customer.phone = phone;
+  }
   return db;
 }
 
