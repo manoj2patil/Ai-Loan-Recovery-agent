@@ -53,7 +53,12 @@ export async function placeTwilioCall(toPhone: string): Promise<{ sid: string; s
     },
     body: params.toString(),
   });
-  const body = await res.json();
+  const text = await res.text();
+  let body: { sid?: string; status?: string; message?: string };
+  try { body = JSON.parse(text); } catch {
+    // Non-JSON body = the request never reached Twilio (egress proxy / captive gateway).
+    throw new Error(`Twilio dispatch blocked before reaching Twilio (HTTP ${res.status}): ${text.slice(0, 120)}`);
+  }
   if (!res.ok) throw new Error(`Twilio ${res.status}: ${body.message ?? "dispatch failed"}`);
-  return { sid: body.sid, status: body.status };
+  return { sid: body.sid!, status: body.status! };
 }

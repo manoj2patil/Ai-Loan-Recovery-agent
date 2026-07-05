@@ -26,6 +26,19 @@ export async function placeCall(loanId: string, opts?: { toGuarantorPhone?: stri
   let providerSid: string | undefined;
   let dispatch: "twilio" | "simulated" = "simulated";
   if (twilioConfigured()) {
+    // Pilot safety: with a real trunk configured, OUTBOUND_CALL_ALLOWLIST (comma-separated
+    // E.164 numbers) restricts who can actually be dialed. Mandatory for test/pilot phases —
+    // the dev seed contains synthetic numbers that must never reach the PSTN.
+    const allowlist = (process.env.OUTBOUND_CALL_ALLOWLIST ?? "")
+      .split(",").map((n) => n.trim()).filter(Boolean);
+    if (allowlist.length > 0 && !allowlist.includes(toPhone)) {
+      logInteraction({
+        customerId: customer.id, loanId: loan.loanId, channel: "SYSTEM",
+        direction: "INTERNAL", outcome: "CALL_BLOCKED_PILOT_ALLOWLIST",
+        details: { toPhone: toPhone.slice(0, 3) + "XXXX" + toPhone.slice(-4) },
+      });
+      throw new Error(`destination not in OUTBOUND_CALL_ALLOWLIST (pilot safety) — add the number or clear the variable for production`);
+    }
     const t = await placeTwilioCall(toPhone); // throws on Twilio rejection — surfaced to caller
     providerSid = t.sid;
     dispatch = "twilio";
