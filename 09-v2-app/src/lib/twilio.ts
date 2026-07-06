@@ -43,7 +43,13 @@ export function istDaypart(now = new Date()): "morning" | "afternoon" | "evening
  *  by scripts/generate-call-audio.mjs, voice "Asha"/anushka) picked by loan + IST daypart;
  *  falls back to the generic greeting, then the silent smoke leg. */
 export function callTwiml(loanId?: string): string {
-  if (process.env.MEDIA_STREAM_WSS) return smokeTwiml(); // full agent leg wins when configured
+  if (process.env.MEDIA_STREAM_WSS) return smokeTwiml(); // full media-stream agent wins when configured
+  // Turn-by-turn conversation (Twilio <Gather> loop → Sarvam LLM/TTS). Needs a public APP_URL.
+  const appUrl = process.env.APP_URL || "";
+  if (process.env.CONVERSATION_MODE === "1" && loanId && appUrl.startsWith("https://")) {
+    const action = escapeXml(`${appUrl}/api/voice/turn?loanId=${encodeURIComponent(loanId)}`);
+    return `<?xml version="1.0" encoding="UTF-8"?><Response><Redirect method="POST">${action}</Redirect></Response>`;
+  }
   if (loanId) {
     const file = `call-${loanId}-${istDaypart()}.wav`;
     const local = path.resolve(process.cwd(), "public", "audio", file);

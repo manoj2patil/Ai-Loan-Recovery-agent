@@ -118,6 +118,34 @@ npx tsx --test tests/prisma-parity.test.mts   # proves the adapter matches the J
 `src/lib/data/prisma-db.ts` is the async PostgreSQL twin of `src/lib/db.ts` — identical
 shapes (parity-tested in CI against a postgres service). Libs flip to it import-by-import.
 
+## Turn-by-turn voice conversation (Twilio Gather + Sarvam)
+
+Beyond the one-way spoken reminder, the app runs a real back-and-forth recovery call — the
+borrower talks, Asha (female, Sarvam `anushka` voice) replies, negotiates a Promise-to-Pay, and
+sends the payment link — over Twilio's `<Gather>` speech loop + Sarvam `sarvam-30b` LLM + Bulbul
+TTS. No persistent WebSocket needed, but **Twilio must reach a public `APP_URL`.**
+
+```bash
+# 1. expose the app (local dev): install cloudflared, then
+cloudflared tunnel --url http://localhost:3000        # prints https://<something>.trycloudflare.com
+# 2. in .env:
+APP_URL=https://<something>.trycloudflare.com
+CONVERSATION_MODE=1
+SARVAM_API_KEY=sk_...
+SARVAM_REASONING_EFFORT=low        # trims per-turn latency
+# 3. restart with NODE_USE_ENV_PROXY=1 and place a call — it's now a live conversation.
+```
+
+Flow (verified): opening (daypart greeting + name + EMI + days overdue) → borrower speaks →
+`sarvam-30b` empathetic reply → narrows to a concrete date → a dedicated extractor captures the
+Promise-to-Pay → `record_promise_to_pay` + payment link to WhatsApp → warm close. Each turn is
+logged (`CALL_TURN`) with what was heard and said. Marathi note: Twilio's `<Gather>` ASR is
+weaker for Marathi than Sarvam saaras — hi/en are solid; for best-in-class Marathi ASR use the
+media-stream / Samvaad path (`MEDIA_STREAM_WSS`), which wins over Gather when set.
+
+Files: `src/lib/sarvam.ts` (LLM+TTS+PTP extractor), `src/lib/conversation.ts` (turn engine),
+`app/api/voice/turn` (Gather webhook), `app/api/voice/tts` (streams each reply's audio).
+
 ## Real telephony (Twilio)
 
 Set `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER` and every gated call
