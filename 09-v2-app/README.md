@@ -136,6 +136,25 @@ SARVAM_REASONING_EFFORT=low        # trims per-turn latency
 # 3. restart with NODE_USE_ENV_PROXY=1 and place a call — it's now a live conversation.
 ```
 
+Human-agent behaviours (verified live):
+- **Thinks like a real officer** — the prompt encodes how a skilled human collector works:
+  build rapport, listen, diagnose the real blocker (*cannot* pay = cash-flow, vs *will not*
+  pay = dispute/avoidance), then handle each differently with a face-saving path, always
+  gently closing toward a specific date or amount. Full objection playbook (no money, business
+  down, "next month", dispute, "why should I pay", angry).
+- **Auto callback** — "I'm in a meeting / travelling / call me tomorrow at 3" → Asha doesn't
+  push; a callback is scheduled with the extracted time + reason (`/api/callbacks`, shown in
+  Ops), she confirms it and ends politely. The dialer picks up PENDING callbacks at their time.
+- **Cross-call memory** — every call writes a one-line summary to SemanticMemory; the next call
+  loads the last few notes into the prompt so Asha references the prior discussion ("last time
+  you mentioned…"). Seeded from the CBS memory rows.
+- **Fraud / trust handling** — "is this a scam?" → calm reassurance: never asks OTP/PIN/card,
+  offers the bank's **official number (from SystemConfig)** to verify, never pressures. Routes
+  to the 105B model.
+- **Smart reluctance handling** — excuses and "won't pay" are met with acknowledge → facts
+  once (days overdue, late fee, CIBIL) → offer the easiest next step (part-payment, short
+  extension, settlement) → escalate to a human officer if unresolved (handoff queue).
+
 Enterprise capabilities (all verified live against Sarvam):
 - **All Indic languages** — the agent is fluent in bn/en/gu/hi/kn/ml/mr/pa/ta/te.
 - **Mid-call language switch** — `src/lib/language.ts` detects the borrower's language every

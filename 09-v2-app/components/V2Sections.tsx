@@ -354,10 +354,27 @@ function NachTab() {
 /* ---------------- Ops ---------------- */
 function OpsTab() {
   const [data, setData] = useState<{ unmatched: any[]; audit: any[]; gateDecisions: any[]; error?: string }>({ unmatched: [], audit: [], gateDecisions: [] });
-  useEffect(() => { api("/api/ops").then((r) => setData({ unmatched: [], audit: [], gateDecisions: [], ...r.body })); }, []);
+  const [callbacks, setCallbacks] = useState<any[]>([]);
+  useEffect(() => {
+    api("/api/ops").then((r) => setData({ unmatched: [], audit: [], gateDecisions: [], ...r.body }));
+    api("/api/callbacks").then((r) => setCallbacks(r.body.callbacks || []));
+  }, []);
   if (data.error) return <Err msg={`${data.error} — switch role to compliance/admin`} />;
   return (
     <div className="space-y-4">
+      <div>
+        <h3 className="font-medium text-sm mb-2">Scheduled callbacks (borrower asked to be called later)</h3>
+        {callbacks.length === 0 && <p className="text-sm text-slate-500">None scheduled.</p>}
+        <ul className="space-y-1 text-sm">
+          {callbacks.filter((c) => c.status === "PENDING").map((c: any, i: number) => (
+            <li key={i} className="flex gap-3">
+              <span className="font-mono text-xs">{c.loanId}</span><span>{c.borrower}</span>
+              <span className="text-slate-600">{new Date(c.scheduledFor).toLocaleString()}</span>
+              <span className="text-slate-500 truncate">{c.reason}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
       <div>
         <h3 className="font-medium text-sm mb-2">Unmatched payments (human reconciliation queue)</h3>
         {data.unmatched.length === 0 && <p className="text-sm text-slate-500">Queue empty.</p>}

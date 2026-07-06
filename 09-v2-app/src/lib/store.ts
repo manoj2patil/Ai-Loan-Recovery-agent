@@ -183,13 +183,21 @@ export interface Db {
     queue: string[]; placed: string[]; gatedOut: number;
     status: "ACTIVE" | "DONE"; createdAt: string;
   }[];
+  callbacks: {
+    id: string; loanId: string; customerId: string; scheduledFor: string;
+    reason: string; status: "PENDING" | "DONE" | "CANCELLED"; createdAt: string;
+  }[];
+  semanticMemory: {
+    id: string; customerId: string; loanId?: string; content: string;
+    language: string; sourceCallSid?: string; createdAt: string;
+  }[];
 }
 
 /** Collections added after the first release — fill them in when loading an older db.json. */
 const LATER_COLLECTIONS = [
   "nachMandates", "guarantors", "whatsappTemplates", "whatsappMessages",
   "voiceCalls", "systemConfig", "businessRules", "handoffQueue", "otps",
-  "users", "campaigns",
+  "users", "campaigns", "callbacks", "semanticMemory",
 ] as const;
 
 // SAHAYAK_DATA_DIR lets tests run against an isolated store instead of data/.
@@ -240,7 +248,7 @@ function seed(): Db {
     fieldVisits: [], auditLog: [], dncNumbers: [], nachMandates: [],
     guarantors: [], whatsappTemplates: [], whatsappMessages: [], voiceCalls: [],
     systemConfig: [], businessRules: [], handoffQueue: [], otps: [],
-    users: [], campaigns: [],
+    users: [], campaigns: [], callbacks: [], semanticMemory: [],
   };
   if (fs.existsSync(SEED_PATH)) {
     const raw = JSON.parse(fs.readFileSync(SEED_PATH, "utf8"));
@@ -321,6 +329,13 @@ function seed(): Db {
     }
     for (const s of raw.SystemConfig ?? []) {
       db.systemConfig.push({ key: s.key, value: s.value, category: s.category, description: s.description });
+    }
+    // Prior-call memory from the CBS export — the agent references this on the next call.
+    for (const m of raw.SemanticMemory ?? []) {
+      db.semanticMemory.push({
+        id: m.id, customerId: m.customerId, content: String(m.content ?? ""),
+        language: m.language ?? "hi", createdAt: m.createdAt,
+      });
     }
   }
 

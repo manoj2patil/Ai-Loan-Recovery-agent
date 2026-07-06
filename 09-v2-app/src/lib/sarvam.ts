@@ -69,6 +69,41 @@ export async function extractPtp(utterance: string, todayIso: string): Promise<{
   }
 }
 
+/** Callback extractor — the borrower asks to be called later ("call me tomorrow at 3",
+ *  "I'm in a meeting", "I'm travelling"). Returns whether they want a callback, the resolved
+ *  time (best guess), and the reason. */
+export async function extractCallback(utterance: string, nowIso: string): Promise<{ wants: boolean; whenIso: string | null; reason: string }> {
+  try {
+    const raw = await chat([
+      { role: "system", content:
+        `Now is ${nowIso} (IST). The user is a loan borrower on a call. Decide if they are asking to be ` +
+        `contacted LATER (busy now, in a meeting, travelling, driving, "call me tomorrow at 3pm", etc.). ` +
+        `Output STRICT JSON only: {"wants": true|false, "whenIso": "YYYY-MM-DDTHH:mm"|null, "reason": "<short>"}. ` +
+        `Resolve relative times to the next occurrence within calling hours (09:00–19:00 IST); if only a day ` +
+        `is given, use 11:00 that day. wants is false for a normal reply. No other text.` },
+      { role: "user", content: utterance },
+    ], { maxTokens: 2500 });
+    const parsed = JSON.parse(raw.replace(/```json|```/gi, "").trim());
+    return { wants: !!parsed.wants, whenIso: parsed.whenIso ?? null, reason: String(parsed.reason ?? "busy") };
+  } catch {
+    return { wants: false, whenIso: null, reason: "" };
+  }
+}
+
+/** Summarize the call into a one-line memory note for the NEXT call (SemanticMemory). */
+export async function summarizeCall(transcript: string, language: string): Promise<string> {
+  try {
+    const raw = await chat([
+      { role: "system", content:
+        `Summarize this loan-recovery call in ONE short factual sentence for the agent's notes on the ` +
+        `next call — capture the borrower's stated reason, any promise-to-pay date, disputes, or callback. ` +
+        `Write it in ${language}. No preamble.` },
+      { role: "user", content: transcript.slice(0, 4000) },
+    ], { maxTokens: 2000 });
+    return raw.slice(0, 300);
+  } catch { return ""; }
+}
+
 /** Synthesize speech → WAV buffer (8 kHz for Twilio telephony). */
 export async function tts(text: string, lang: string): Promise<Buffer> {
   const res = await fetch(TTS_URL(), {

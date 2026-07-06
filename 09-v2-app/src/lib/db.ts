@@ -203,6 +203,28 @@ export function updateBusinessRule(id: string, patch: Partial<BusinessRule>): Bu
   return db.businessRules[i];
 }
 
+// ---- callbacks (borrower asked to be called later) ----
+export function scheduleCallback(loanId: string, customerId: string, scheduledFor: string, reason: string) {
+  const db = getDb();
+  const row = { id: newId("cb"), loanId, customerId, scheduledFor, reason, status: "PENDING" as const, createdAt: new Date().toISOString() };
+  db.callbacks.push(row); persist();
+  return row;
+}
+export function listCallbacks() { return getDb().callbacks; }
+
+// ---- semantic memory (cross-call history of what was discussed) ----
+export function recentMemory(customerId: string, limit = 4) {
+  return getDb().semanticMemory
+    .filter((m) => m.customerId === customerId)
+    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+    .slice(0, limit);
+}
+export function writeMemory(customerId: string, content: string, language: string, opts?: { loanId?: string; sourceCallSid?: string }) {
+  const db = getDb();
+  db.semanticMemory.push({ id: newId("sm"), customerId, content, language, loanId: opts?.loanId, sourceCallSid: opts?.sourceCallSid, createdAt: new Date().toISOString() });
+  persist();
+}
+
 // ---- human handoff queue ----
 export function queueHandoff(loanId: string, customerId: string, reason: string): void {
   const db = getDb();
