@@ -6,6 +6,9 @@
 //   - production conversation runs over Media Streams (<Connect><Stream>, folder 06);
 //     the smoke TwiML below just proves the trunk end-to-end.
 
+import fs from "fs";
+import path from "path";
+
 export function twilioConfigured(): boolean {
   return !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_FROM_NUMBER);
 }
@@ -30,16 +33,38 @@ export function smokeTwiml(): string {
   return `<?xml version="1.0" encoding="UTF-8"?><Response><Pause length="2"/><Hangup/></Response>`;
 }
 
+/** Daypart by IST clock — drives the "good morning/afternoon/evening" audio variant. */
+export function istDaypart(now = new Date()): "morning" | "afternoon" | "evening" {
+  const istHour = (now.getUTCHours() + 5.5 + 24) % 24;
+  return istHour < 12 ? "morning" : istHour < 17 ? "afternoon" : "evening";
+}
+
+/** Per-call TwiML: personalized ledger audio (name, EMI, days overdue, pending — generated
+ *  by scripts/generate-call-audio.mjs, voice "Asha"/anushka) picked by loan + IST daypart;
+ *  falls back to the generic greeting, then the silent smoke leg. */
+export function callTwiml(loanId?: string): string {
+  if (process.env.MEDIA_STREAM_WSS) return smokeTwiml(); // full agent leg wins when configured
+  if (loanId) {
+    const file = `call-${loanId}-${istDaypart()}.wav`;
+    const local = path.resolve(process.cwd(), "public", "audio", file);
+    const base = process.env.AUDIO_BASE_URL;
+    if (base && fs.existsSync(local)) {
+      return `<?xml version="1.0" encoding="UTF-8"?><Response><Play>${escapeXml(`${base}/${file}`)}</Play><Pause length="1"/><Hangup/></Response>`;
+    }
+  }
+  return smokeTwiml();
+}
+
 /** Place a real PSTN call via the Twilio REST API. Uses inline TwiML so the smoke test
  *  needs no public webhook; when APP_URL is publicly reachable, a StatusCallback keeps
  *  the VoiceCall row in sync. Returns the provider Call SID. */
-export async function placeTwilioCall(toPhone: string): Promise<{ sid: string; status: string }> {
+export async function placeTwilioCall(toPhone: string, loanId?: string): Promise<{ sid: string; status: string }> {
   const sid = process.env.TWILIO_ACCOUNT_SID!;
   const token = process.env.TWILIO_AUTH_TOKEN!;
   const from = process.env.TWILIO_FROM_NUMBER!;
   const appUrl = process.env.APP_URL || "";
 
-  const params = new URLSearchParams({ To: toPhone, From: from, Twiml: smokeTwiml() });
+  const params = new URLSearchParams({ To: toPhone, From: from, Twiml: callTwiml(loanId) });
   if (appUrl.startsWith("https://")) {
     params.set("StatusCallback", `${appUrl}/api/voice/status`);
     params.set("StatusCallbackEvent", "completed");

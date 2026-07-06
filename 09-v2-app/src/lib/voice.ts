@@ -39,7 +39,7 @@ export async function placeCall(loanId: string, opts?: { toGuarantorPhone?: stri
       });
       throw new Error(`destination not in OUTBOUND_CALL_ALLOWLIST (pilot safety) — add the number or clear the variable for production`);
     }
-    const t = await placeTwilioCall(toPhone); // throws on Twilio rejection — surfaced to caller
+    const t = await placeTwilioCall(toPhone, loanId); // throws on Twilio rejection — surfaced to caller
     providerSid = t.sid;
     dispatch = "twilio";
   }
