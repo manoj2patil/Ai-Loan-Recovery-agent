@@ -136,14 +136,33 @@ SARVAM_REASONING_EFFORT=low        # trims per-turn latency
 # 3. restart with NODE_USE_ENV_PROXY=1 and place a call — it's now a live conversation.
 ```
 
-Flow (verified): opening (daypart greeting + name + EMI + days overdue) → borrower speaks →
-`sarvam-30b` empathetic reply → narrows to a concrete date → a dedicated extractor captures the
-Promise-to-Pay → `record_promise_to_pay` + payment link to WhatsApp → warm close. Each turn is
-logged (`CALL_TURN`) with what was heard and said. Marathi note: Twilio's `<Gather>` ASR is
-weaker for Marathi than Sarvam saaras — hi/en are solid; for best-in-class Marathi ASR use the
-media-stream / Samvaad path (`MEDIA_STREAM_WSS`), which wins over Gather when set.
+Enterprise capabilities (all verified live against Sarvam):
+- **All Indic languages** — the agent is fluent in bn/en/gu/hi/kn/ml/mr/pa/ta/te.
+- **Mid-call language switch** — `src/lib/language.ts` detects the borrower's language every
+  turn (script-based + Hindi/Marathi disambiguation, instant, no network). If they switch, Asha
+  switches with them — the reply, TTS voice, and Twilio's ASR hint all follow. Logged as
+  `LANGUAGE_SWITCH`. (Verified: a call opened in Hindi, borrower switched to Marathi, Asha
+  replied in Marathi and closed the PTP.)
+- **Model tiering** — `sarvam-30b` on the fast hot path; hardship / dispute / settlement /
+  frustration turns route to **`sarvam-105b`** (the deep negotiator). ROADMAP Phase 4.
+- **Payment confirmation** — if the borrower says they've already paid, Asha thanks them, asks
+  for the UPI reference on WhatsApp, and marks it for team verification (no argument).
+- **Strict scope** — loan-account only; off-topic questions get one polite redirect, never an answer.
+- **Rich WhatsApp close** — on a captured PTP, `sendPaymentMessage` sends the full account
+  card (a/c no., pending, EMI, days-overdue + bucket, next due, pay-by date, secure link,
+  UPI-reference + `DATE DD/MM` + `STOP` instructions) in the borrower's language, all values
+  from the ledger — then a warm goodbye.
 
-Files: `src/lib/sarvam.ts` (LLM+TTS+PTP extractor), `src/lib/conversation.ts` (turn engine),
+Flow: opening (daypart greeting + name + EMI + days overdue, ledger-only) → borrower speaks →
+empathetic reply (30b/105b) that mirrors their language and narrows to a concrete date → a
+dedicated extractor captures the Promise-to-Pay → PTP recorded + rich WhatsApp payment message →
+warm close. Marathi note: Twilio's `<Gather>` ASR is weaker for Marathi than Sarvam saaras —
+hi/en are solid; for best-in-class Marathi ASR use the media-stream / Samvaad path
+(`MEDIA_STREAM_WSS`), which wins over Gather when set.
+
+Files: `src/lib/sarvam.ts` (30b/105b LLM + TTS + PTP extractor), `src/lib/language.ts` (Indic
+detection + WhatsApp localization), `src/lib/conversation.ts` (turn engine: switch, tiering,
+payment-confirm, scope, rich close), `src/lib/whatsapp.ts` (`sendPaymentMessage`),
 `app/api/voice/turn` (Gather webhook), `app/api/voice/tts` (streams each reply's audio).
 
 ## Real telephony (Twilio)

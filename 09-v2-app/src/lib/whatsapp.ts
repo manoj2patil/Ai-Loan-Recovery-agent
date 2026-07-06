@@ -8,6 +8,9 @@ import { findLoanByLoanId, findTemplate, insertWhatsappMessage, logInteraction }
 import { evaluateGate } from "./compliance";
 import { bucketFor } from "./business-rules";
 import { maskName } from "./audit";
+import { createPaymentLink } from "./payments";
+import { waLabels } from "./language";
+import { getConfig } from "./config";
 
 // Template names as they exist in the seeded WhatsappTemplate registry (from the CBS export).
 const BUCKET_TEMPLATE: Record<string, string> = {
@@ -20,6 +23,88 @@ const BUCKET_TEMPLATE: Record<string, string> = {
 
 function render(body: string, vars: string[]): string {
   return body.replace(/\{\{(\d)\}\}/g, (_, n) => vars[Number(n) - 1] ?? "");
+}
+
+/** Shared dispatch: real Twilio WhatsApp send when configured (pilot-allowlist guarded),
+ *  else simulated. Returns wamid + status. Throws on provider rejection / egress block. */
+async function dispatchWhatsapp(toPhone: string, body: string): Promise<{ wamid?: string; status: "SENT" | "DELIVERED" }> {
+  if (!(process.env.TWILIO_WHATSAPP_FROM && process.env.TWILIO_ACCOUNT_SID)) {
+    return { status: "DELIVERED" }; // dev / simulated BSP
+  }
+  const allowlist = (process.env.OUTBOUND_CALL_ALLOWLIST ?? "").split(",").map((n) => n.trim()).filter(Boolean);
+  if (allowlist.length > 0 && !allowlist.includes(toPhone))
+    throw new Error("destination not in OUTBOUND_CALL_ALLOWLIST (pilot safety)");
+  const sid = process.env.TWILIO_ACCOUNT_SID;
+  const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
+    method: "POST",
+    headers: {
+      Authorization: "Basic " + Buffer.from(`${sid}:${process.env.TWILIO_AUTH_TOKEN}`).toString("base64"),
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({ From: `whatsapp:${process.env.TWILIO_WHATSAPP_FROM}`, To: `whatsapp:${toPhone}`, Body: body }).toString(),
+  });
+  const text = await res.text();
+  let parsed: { sid?: string; message?: string };
+  try { parsed = JSON.parse(text); } catch {
+    throw new Error(`WhatsApp dispatch blocked before reaching Twilio (HTTP ${res.status}): ${text.slice(0, 120)}`);
+  }
+  if (!res.ok) throw new Error(`Twilio WhatsApp ${res.status}: ${parsed.message ?? "send failed"}`);
+  return { wamid: parsed.sid, status: "SENT" };
+}
+
+/** Rich payment message (the agent's close-of-call deliverable): full account details +
+ *  secure payment link + UPI-reference instructions, localized to the borrower's language.
+ *  ALL figures come from the ledger (GOLDEN RULE 1). Sent through the gate (intent="receipt":
+ *  transactional, the borrower agreed on the call). Returns the payment link + rendered body. */
+export async function sendPaymentMessage(loanId: string, opts?: { amount?: number; payByDate?: string; language?: string }) {
+  const loan = findLoanByLoanId(loanId);
+  if (!loan) throw new Error("loan not found");
+  const customer = loan.customer;
+  const lang = opts?.language ?? customer.preferredLanguage;
+  const L = waLabels(lang);
+
+  const amount = opts?.amount ?? loan.emiAmount; // EMI by default — ledger-derived
+  const link = await createPaymentLink({ loanId, customerId: customer.id, amount, purpose: "EMI" });
+
+  const gate = await evaluateGate({ customerId: customer.id, channel: "whatsapp", intent: "receipt" });
+  if (gate.verdict !== "ALLOW") return { sent: false, gate };
+
+  const inr = (n: number) => `₹${Number(n).toLocaleString("en-IN")}`;
+  const payBy = opts?.payByDate
+    ?? new Date(Date.now() + 2 * 86400000).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+  const nextDue = loan.nextDueDate ? new Date(loan.nextDueDate).toISOString().slice(0, 10) : "—";
+  const agent = getConfig("AGENT_NAME", process.env.AGENT_NAME || "Asha");
+  const bank = getConfig("BANK_NAME", "Sahakar Krishi Vikas Cooperative Bank (SKVCB)");
+
+  const body = [
+    L.greet(customer.name),
+    L.accountDetails,
+    `${L.acctNo}: ${loan.loanId}`,
+    `${L.pending}: ${inr(loan.pendingAmount)}`,
+    `${L.emi}: ${inr(loan.emiAmount)}`,
+    L.daysOverdue(loan.dpd, bucketFor(loan.dpd)),
+    `${L.nextDue}: ${nextDue}`,
+    L.payBy(payBy),
+    L.payHere,
+    link.webUrl,
+    L.ifPaid,
+    L.confirmDate,
+    L.stop,
+    `— ${agent}, ${bank}`,
+  ].join("\n");
+
+  const { wamid, status } = await dispatchWhatsapp(customer.phone, body);
+  const message = insertWhatsappMessage({
+    customerId: customer.id, loanId: loan.loanId, direction: "OUTBOUND", toPhone: customer.phone,
+    body, status, variables: { loan_id: loan.loanId, linkId: link.id, ...(wamid ? { wamid } : {}) },
+    sentAt: new Date().toISOString(), deliveredAt: status === "DELIVERED" ? new Date().toISOString() : undefined,
+  });
+  logInteraction({
+    customerId: customer.id, loanId: loan.loanId, channel: "WHATSAPP", direction: "OUTBOUND",
+    outcome: "PAYMENT_LINK_SENT", gateVerdict: gate.verdict,
+    details: { messageId: message.id, linkId: link.id, amount, language: lang },
+  });
+  return { sent: true, gate, messageId: message.id, link: link.webUrl, body };
 }
 
 /** Send the DPD-appropriate notice for a loan (or an explicit templateName). */
@@ -48,39 +133,7 @@ export async function sendNotice(loanId: string, templateName?: string) {
   ];
   const body = render(template.bodyText, vars);
 
-  // Dispatch: TWILIO_WHATSAPP_FROM set → REAL send via the Twilio WhatsApp API (sandbox:
-  // the recipient must have joined the sandbox first). Unset → simulated BSP (dev).
-  // PRODUCTION WABA uses approved Utility templates via Meta Cloud API — same call shape.
-  let wamid: string | undefined;
-  let status: "SENT" | "DELIVERED" = "DELIVERED";
-  if (process.env.TWILIO_WHATSAPP_FROM && process.env.TWILIO_ACCOUNT_SID) {
-    // Pilot safety: same allowlist as voice — real messages only to tester-owned numbers.
-    const allowlist = (process.env.OUTBOUND_CALL_ALLOWLIST ?? "")
-      .split(",").map((n) => n.trim()).filter(Boolean);
-    if (allowlist.length > 0 && !allowlist.includes(customer.phone))
-      throw new Error("destination not in OUTBOUND_CALL_ALLOWLIST (pilot safety)");
-    const sid = process.env.TWILIO_ACCOUNT_SID;
-    const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
-      method: "POST",
-      headers: {
-        Authorization: "Basic " + Buffer.from(`${sid}:${process.env.TWILIO_AUTH_TOKEN}`).toString("base64"),
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: new URLSearchParams({
-        From: `whatsapp:${process.env.TWILIO_WHATSAPP_FROM}`,
-        To: `whatsapp:${customer.phone}`,
-        Body: body,
-      }).toString(),
-    });
-    const text = await res.text();
-    let parsed: { sid?: string; message?: string };
-    try { parsed = JSON.parse(text); } catch {
-      throw new Error(`WhatsApp dispatch blocked before reaching Twilio (HTTP ${res.status}): ${text.slice(0, 120)}`);
-    }
-    if (!res.ok) throw new Error(`Twilio WhatsApp ${res.status}: ${parsed.message ?? "send failed"}`);
-    wamid = parsed.sid;
-    status = "SENT"; // delivery lands via the status webhook in production
-  }
+  const { wamid, status } = await dispatchWhatsapp(customer.phone, body);
 
   const message = insertWhatsappMessage({
     customerId: customer.id, loanId: loan.loanId, templateId: template.id,

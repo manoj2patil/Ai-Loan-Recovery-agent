@@ -17,12 +17,20 @@ export const LANG_CODE: Record<string, string> = {
 
 export interface ChatMessage { role: "system" | "user" | "assistant"; content: string }
 
-/** One LLM turn. Returns the assistant's spoken reply. sarvam-30b is a REASONING model:
- *  it emits a long `reasoning_content` and the final answer in `content`, so we must budget
+// Model tiers: 30b is the fast hot path (greetings, simple turns); 105b is the deeper
+// negotiator (hardship, disputes, multi-loan, settlement reasoning) — ROADMAP Phase 4.
+export type Tier = "fast" | "deep";
+function modelFor(tier: Tier): string {
+  if (tier === "deep") return process.env.SARVAM_LLM_MODEL_DEEP || "sarvam-105b";
+  return process.env.SARVAM_LLM_MODEL || "sarvam-30b";
+}
+
+/** One LLM turn. Returns the assistant's spoken reply. sarvam-30b/105b are REASONING models:
+ *  they emit a long `reasoning_content` and the final answer in `content`, so we must budget
  *  enough tokens for both — too few and `content` comes back empty. We use `content` only. */
-export async function chat(messages: ChatMessage[], opts?: { maxTokens?: number }): Promise<string> {
+export async function chat(messages: ChatMessage[], opts?: { maxTokens?: number; tier?: Tier }): Promise<string> {
   const payload: Record<string, unknown> = {
-    model: process.env.SARVAM_LLM_MODEL || "sarvam-30b",
+    model: modelFor(opts?.tier ?? "fast"),
     messages,
     max_tokens: opts?.maxTokens ?? 2000,   // reasoning + answer both need to fit
     temperature: 0.3,
