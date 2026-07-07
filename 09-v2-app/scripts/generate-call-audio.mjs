@@ -3,8 +3,8 @@
 // Ledger figures (EMI, days overdue, pending) come from the seeded store — GOLDEN RULE 1.
 // Bulbul pronounces Indian currency/dates natively, so figures are passed as numerals.
 //
-// Usage:
-//   SARVAM_API_KEY=sk_... node scripts/generate-call-audio.mjs LOAN1 [LOAN2 ...]
+// Usage (run with tsx — it imports the amount-to-speech TS lib):
+//   SARVAM_API_KEY=sk_... npx tsx scripts/generate-call-audio.mjs LOAN1 [LOAN2 ...]
 //   (no args → the loans listed in SEED_PHONE_OVERRIDES)
 //
 // Output: public/audio/call-<loanId>-<daypart>.wav  (morning|afternoon|evening)
@@ -12,6 +12,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { amountToWords, daysToWords } from "../src/lib/amount-to-speech.ts";
 
 const KEY = process.env.SARVAM_API_KEY;
 if (!KEY) { console.error("Set SARVAM_API_KEY"); process.exit(1); }
@@ -32,23 +33,27 @@ const DAYPART = {
 };
 
 function script(lang, daypart, c, l) {
-  const inr = (n) => Number(n).toLocaleString("en-IN");
+  // VOICE LESSON: amounts + day counts as NATIVE WORDS (not digits) so Bulbul says
+  // "अडतीस हजार रुपये", not English "38,000".
+  const emi = amountToWords(l.emiAmount, lang);
+  const pending = amountToWords(l.pendingAmount, lang);
+  const days = daysToWords(l.dpd, lang);
   if (lang === "mr") return (
     `${DAYPART.mr[daypart]}, नमस्कार ${c.name} जी. मी सहकार कृषी विकास बँकेकडून आशा बोलत आहे. ` +
-    `तुमच्या कर्जाचा ${inr(l.emiAmount)} रुपयांचा हप्ता ${l.dpd} दिवसांपासून थकीत आहे. ` +
-    `एकूण थकबाकी ${inr(l.pendingAmount)} रुपये आहे. ` +
+    `तुमच्या कर्जाचा ${emi} हप्ता ${days} दिवसांपासून थकीत आहे. ` +
+    `एकूण थकबाकी ${pending} आहे. ` +
     `आम्ही तुमच्या व्हॉट्सॲपवर सुरक्षित पेमेंट लिंक पाठवली आहे, कृपया लवकरात लवकर भरणा करा. ` +
     `धन्यवाद, तुमचा दिवस शुभ असो.`);
   if (lang === "hi") return (
     `${DAYPART.hi[daypart]}, नमस्ते ${c.name} जी. मैं सहकार कृषि विकास बैंक से आशा बोल रही हूँ. ` +
-    `आपके ऋण की ${inr(l.emiAmount)} रुपये की किस्त ${l.dpd} दिनों से बकाया है. ` +
-    `कुल बकाया राशि ${inr(l.pendingAmount)} रुपये है. ` +
+    `आपके ऋण की ${emi} की किस्त ${days} दिनों से बकाया है. ` +
+    `कुल बकाया राशि ${pending} है. ` +
     `हमने आपके व्हाट्सएप पर सुरक्षित पेमेंट लिंक भेजी है, कृपया जल्द से जल्द भुगतान करें. ` +
     `धन्यवाद, आपका दिन शुभ हो.`);
   return (
     `${DAYPART.en[daypart]}, ${c.name}. This is Asha calling from Sahakar Krishi Vikas Bank. ` +
-    `Your loan installment of rupees ${inr(l.emiAmount)} is overdue by ${l.dpd} days. ` +
-    `The total pending amount is rupees ${inr(l.pendingAmount)}. ` +
+    `Your loan installment of ${emi} is overdue by ${days} days. ` +
+    `The total pending amount is ${pending}. ` +
     `We have sent a secure payment link to your WhatsApp; please pay at the earliest. ` +
     `Thank you, and have a good day.`);
 }

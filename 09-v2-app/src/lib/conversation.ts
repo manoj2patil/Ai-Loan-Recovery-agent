@@ -14,6 +14,7 @@ import { getConfig } from "./config";
 import { sendPaymentMessage } from "./whatsapp";
 import { istDaypart } from "./twilio";
 import { detectLanguage, LANG_NAME, Lang } from "./language";
+import { amountToWords, daysToWords } from "./amount-to-speech";
 
 interface CallState {
   callSid: string; loanId: string; customerId: string; language: string;
@@ -136,11 +137,14 @@ export async function startConversation(callSid: string, loanId: string): Promis
   CALLS.set(callSid, state);
 
   // Deterministic opening (no LLM latency on turn 0): greeting + who + facts + open question.
+  // Amounts + days spoken as NATIVE WORDS (VOICE LESSON) so TTS never reads English digits.
+  const emiW = amountToWords(loan.emiAmount, language);
+  const daysW = daysToWords(loan.dpd, language);
   const opening = language === "mr"
-    ? `${greeting}, नमस्कार ${loan.customer.name} जी. मी सहकार कृषी विकास बँकेकडून आशा बोलत आहे. तुमच्या कर्जाचा ${inr(loan.emiAmount)} रुपयांचा हप्ता ${loan.dpd} दिवसांपासून थकीत आहे. काही अडचण आहे का?`
+    ? `${greeting}, नमस्कार ${loan.customer.name} जी. मी सहकार कृषी विकास बँकेकडून आशा बोलत आहे. तुमच्या कर्जाचा ${emiW} हप्ता ${daysW} दिवसांपासून थकीत आहे. काही अडचण आहे का?`
     : language === "hi"
-    ? `${greeting}, नमस्ते ${loan.customer.name} जी. मैं सहकार कृषि विकास बैंक से आशा बोल रही हूँ. आपके ऋण की ${inr(loan.emiAmount)} रुपये की किस्त ${loan.dpd} दिनों से बकाया है. क्या कोई परेशानी है?`
-    : `${greeting}, ${loan.customer.name}. This is Asha from Sahakar Krishi Vikas Bank. Your EMI of ${inr(loan.emiAmount)} rupees is overdue by ${loan.dpd} days. Is there some difficulty?`;
+    ? `${greeting}, नमस्ते ${loan.customer.name} जी. मैं सहकार कृषि विकास बैंक से आशा बोल रही हूँ. आपके ऋण की ${emiW} की किस्त ${daysW} दिनों से बकाया है. क्या कोई परेशानी है?`
+    : `${greeting}, ${loan.customer.name}. This is Asha from Sahakar Krishi Vikas Bank. Your EMI of ${emiW} is overdue by ${daysW} days. Is there some difficulty?`;
 
   state.messages.push({ role: "assistant", content: opening });
   logInteraction({
