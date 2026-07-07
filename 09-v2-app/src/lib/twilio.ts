@@ -55,7 +55,10 @@ export function callTwiml(loanId?: string): string {
     const local = path.resolve(process.cwd(), "public", "audio", file);
     const base = process.env.AUDIO_BASE_URL;
     if (base && fs.existsSync(local)) {
-      return `<?xml version="1.0" encoding="UTF-8"?><Response><Play>${escapeXml(`${base}/${file}`)}</Play><Pause length="1"/><Hangup/></Response>`;
+      // Cache-buster (?v=mtime): the filename is stable but its bytes change when audio is
+      // regenerated — force Twilio/GitHub to fetch the fresh clip, never a stale cached one.
+      const v = Math.floor(fs.statSync(local).mtimeMs);
+      return `<?xml version="1.0" encoding="UTF-8"?><Response><Play>${escapeXml(`${base}/${file}?v=${v}`)}</Play><Pause length="1"/><Hangup/></Response>`;
     }
   }
   return smokeTwiml();
