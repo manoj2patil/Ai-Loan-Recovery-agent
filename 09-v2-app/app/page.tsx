@@ -4,6 +4,7 @@
 
 import V1Sections from "@components/V1Sections";
 import V2Sections from "@components/V2Sections";
+import NetworkPilotSections from "@components/NetworkPilotSections";
 import SessionBadge from "@components/SessionBadge";
 
 export default function Dashboard() {
@@ -23,6 +24,7 @@ export default function Dashboard() {
       </header>
       <V1Sections />
       <V2Sections />
+      <NetworkPilotSections />
     </main>
   );
 }

@@ -299,8 +299,8 @@ console.log("\n10) Phase-4/5 depth: QA, SARFAESI draft, OTP, economics, network,
 
   // Guarantor network graph
   const { body: net } = await api("/api/network");
-  check("network graph has edges", net.edges?.length > 50, `${net.edges?.length} edges`);
-  check("network insights computed", Array.isArray(net.insights?.multiLoanGuarantors) && Array.isArray(net.insights?.crossExposedGuarantors));
+  check("network graph has edges", net.graph?.edges?.length > 50, `${net.graph?.edges?.length} edges`);
+  check("network analytics computed", net.analytics?.sharedGuarantors >= 0 && Array.isArray(net.analytics?.topLeverage));
 
   // Masked CSV export
   const exp = await fetch(BASE + "/api/data/export?entity=loans", { headers: { "x-role": "officer", "x-actor": "acceptance-bot" } });
@@ -379,6 +379,21 @@ console.log("\n12) Login UI + Twilio wiring (env-driven dispatch)");
   // without TWILIO_* the dispatch mode is recorded as simulated on the interaction log
   const dispatched = db().interactionLogs.find((i) => i.outcome === "CALL_INITIATED" && (i.details)?.dispatch);
   check("dispatch mode recorded on call logs", dispatched?.details?.dispatch === "simulated", JSON.stringify(dispatched?.details ?? {}));
+}
+
+console.log("\n13) Network graph + pilot planner (Phase 5 moat)");
+{
+  const { body: net } = await api("/api/network");
+  check("network graph has nodes/edges/clusters", net.graph?.nodes?.length > 0 && net.graph?.edges?.length > 0 && net.clusters?.length > 0);
+  check("every graph node has layout coords", net.graph.nodes.every((n) => typeof n.x === "number" && typeof n.y === "number"));
+  check("network analytics: shared guarantors + guarantors-who-borrow + clustered defaults", net.analytics?.sharedGuarantors >= 0 && net.analytics?.guarantorsWhoBorrow >= 0 && net.analytics?.clusteredDefaults >= 0);
+  check("indirect leverage paths computed", Array.isArray(net.analytics?.topLeverage));
+
+  const { body: pilot } = await api("/api/pilot");
+  check("branch ranking sorted by NPA volume", pilot.branchRanking?.length > 0 && pilot.branchRanking.every((b, i, a) => i === 0 || a[i - 1].npaOutstanding >= b.npaOutstanding));
+  check("A/B treatment-vs-control design present", pilot.abDesign?.treatment && pilot.abDesign?.control);
+  check("exactly 8 go/no-go gates", pilot.goNoGo?.gates?.length === 8);
+  check("projected lift + 4-phase rollout", pilot.projectedLift?.relativeUpliftPct > 0 && pilot.phases?.length === 4);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

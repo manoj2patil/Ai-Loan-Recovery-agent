@@ -30,6 +30,23 @@ from the real CBS export. Implements the v1 operational phases from
 - **Governance (Phase 5)** — gate-decision and channel-mix KPIs, recovery totals, PTP
   kept-rate, suppressions, handoff queue.
 
+## Phase 5 — Network graph + pilot planner (the moat visuals)
+
+- **Guarantor network graph** (`/api/network`, Network Graph tab) — an **SVG** of the
+  borrower↔guarantor web: union-find **shared-guarantor clusters**, borrowers sized by
+  exposure, guarantors as diamonds (highlighted when they back multiple loans or are
+  themselves borrowers), **red rings** on overdue borrowers, an **amber halo** on
+  clustered-default clusters, and an **indirect-leverage table** — shared guarantors ranked by
+  how many defaulted borrowers one conversation reaches. `src/lib/network.ts`.
+- **Network analytics** — shared guarantors, guarantors-who-are-borrowers, clustered defaults,
+  total exposure in clusters, and exposure-at-risk (in clustered defaults).
+- **Pilot rollout planner** (`/api/pilot`, Pilot Rollout tab) — `src/lib/pilot.ts`:
+  branch ranking by **NPA volume** (city = branch), a deterministic **A/B treatment-vs-control**
+  split with a balance check, **8 computed go/no-go gates** (phone coverage, consent, DND scrub,
+  gate veto, approved templates, recording, escalation path, rollback), **projected recovery
+  lift** with transparent assumptions, and the **4-phase rollout** (single-branch A/B → region →
+  state → full book) each with its exit gate.
+
 ## Phase 6 — Enterprise hardening
 
 - **Session auth** — `/api/auth` login/logout with scrypt-hashed users (`officer1` /
